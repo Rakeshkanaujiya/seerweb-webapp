@@ -55,13 +55,12 @@ const Navbar = () => {
       .toUpperCase();
 
   return (
-    <nav className="fixed top-0 left-0 lg:left-64 right-0 h-16 
-      bg-gray-50 border-b border-gray-200 
+    <nav className="fixed top-0 left-0 lg:left-64 right-0 h-16 bg-blue-500 border-b border-gray-200 
       flex items-center justify-between px-6 z-30">
 
       {/* LEFT SIDE — Page Title */}
       <div>
-        <h1 className="text-lg font-semibold text-gray-800">
+        <h1 className="text-lg font-semibold text-white">
           Welcome back, {user?.name}
         </h1>
       </div>
@@ -74,10 +73,10 @@ const Navbar = () => {
           <Button
             variant="ghost"
             size="icon"
-            className="relative hover:bg-gray-200"
+            className="relative hover:bg-gray-300"
             onClick={() => navigate("/dealer/cart")}
           >
-            <ShoppingCart className="h-5 w-5 text-gray-700" />
+            <ShoppingCart className="h-5 w-5 text-white" />
             {cart.items.length > 0 && (
               <span className="absolute -top-1 -right-1 inline-flex items-center justify-center px-2 py-1 text-xs font-bold text-white bg-red-500 rounded-full">
                 {cart.items.length}

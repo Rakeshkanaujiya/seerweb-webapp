@@ -1,4 +1,6 @@
-import { useState, useCallback, useEffect } from "react";
+// Second file
+
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,11 +25,14 @@ import VoiceMicButton from "@/components/voice/VoiceMicButton";
 import VoiceFallbackModal from "@/components/voice/VoiceFallbackModal";
 import { useNavigate } from "react-router-dom";
 import Navbar from "@/components/Navbar";
-import ProductCard from "@/components/ProductCard";
+import OmsCart from "@/components/OmsCart";
 import { useAuth } from "@/context/AuthContext";
 import { apiUrl } from "@/url";
 import { useIsMobile } from "@/hooks/use-mobile";
 import Sidebar from "@/components/Sidebar";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
+import { getImageUrl, getProxiedImageUrl } from "@/lib/imageUrl";
 
 interface Retailer {
   id:         number;
@@ -62,8 +67,12 @@ const TakeOrder = () => {
   const [activeTab, setActiveTab]             = useState<string>("retailers");
   const [isSubmitting, setIsSubmitting]       = useState(false);
   const [retailerSearch, setRetailerSearch]   = useState("");
-
-  // ── Auth guard ────────────────────────────────────────────────────────────
+  const [filterBrand, setFilterBrand] = useState("all");
+  const [filterCategory, setFilterCategory] = useState("all");
+  const [filterDesign, setFilterDesign] = useState("");
+  const pdfContainerRef = useRef<HTMLDivElement>(null);
+  
+    // ── Auth guard ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isAuthenticated) { navigate("/"); return; }
     if (user?.role !== "dealer") { navigate("/retailer/dashboard"); return; }
@@ -108,6 +117,7 @@ const TakeOrder = () => {
             name:             item.name || "",
             brand:            item.brand || attrs.brand || "",
             model:            item.model || attrs.model || "",
+            color:            item.color || attrs.color || "",
             price:            Number(item.price),
             stock:            Number(item.stock),
             description:      item.description || "",
@@ -130,9 +140,26 @@ const TakeOrder = () => {
 
   // ── Voice ─────────────────────────────────────────────────────────────────
   const {
-    voiceState, rawTranscript, parseResult, errorMessage,
+    voiceState, rawTranscript, parseResult, errorMessage, micVolume,
     startListening, stopListening, reprocessTranscript, reset: resetVoice,
   } = useVoiceOrder({ products });
+  
+  // Delay error display for better UX
+  const [showError, setShowError] = useState(false);
+  const [errorTimeout, setErrorTimeout] = useState<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (errorMessage && voiceState === 'error') {
+      if (errorTimeout) clearTimeout(errorTimeout);
+      const timeout = setTimeout(() => setShowError(true), 2000);
+      setErrorTimeout(timeout);
+    } else {
+      setShowError(false);
+    }
+    return () => {
+      if (errorTimeout) clearTimeout(errorTimeout);
+    };
+  }, [errorMessage, voiceState]);
 
   const handleVoiceStart = useCallback(() => { resetVoice(); startListening(); }, [resetVoice, startListening]);
 
@@ -179,13 +206,401 @@ const TakeOrder = () => {
     ));
   };
 
-  const filteredProducts = searchQuery.trim()
-    ? products.filter((p) =>
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.brand.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.model.toLowerCase().includes(searchQuery.toLowerCase())
+const brands = useMemo(() => {
+  const uniqueBrands = new Set(
+    products
+      .map(p => p.brand || p.attributes?.brand)
+      .filter(Boolean)
+  );
+  return Array.from(uniqueBrands).sort();
+}, [products]);
+
+const categories = useMemo(() => {
+  const catValues = products
+    .map(p => p.attributes?.category || p.attributes?.master_category)
+    .filter(Boolean);
+  const uniqueCategories = new Set(catValues);
+  return Array.from(uniqueCategories).sort();
+}, [products]);
+
+const filteredProducts = useMemo(() => {
+  return products.filter((p) => {
+    const q = searchQuery.toLowerCase();
+
+    if (
+      q &&
+      !p.name.toLowerCase().includes(q) &&
+      !Object.values(p.attributes ?? {}).some((v) =>
+        String(v).toLowerCase().includes(q)
       )
-    : products;
+    ) return false;
+
+    if (filterBrand !== "all" && (p.attributes?.brand || p.brand) !== filterBrand)
+      return false;
+
+    if (filterCategory !== "all") {
+      const c = p.attributes?.category || p.attributes?.master_category;
+      if (c !== filterCategory) return false;
+    }
+
+    if (filterDesign && !p.name.toLowerCase().includes(filterDesign.toLowerCase()))
+      return false;
+
+    return true;
+  });
+}, [products, searchQuery, filterBrand, filterCategory, filterDesign]);
+
+const resetFilters = () => {
+  setSearchQuery("");
+  setFilterBrand("all");
+  setFilterCategory("all");
+  setFilterDesign("");
+};
+
+// Replace toBase64 entirely with this
+const loadImageAsBase64 = async (url: string, retries = 3): Promise<string> => {
+  if (!url) return "";
+
+  // If external URL, skip canvas tainting - use placeholder for PDF
+  if (url.startsWith("http") && !url.includes(apiUrl.replace("/api", ""))) {
+    return ""; 
+  }
+
+  const attemptLoad = (delay = 0): Promise<string> => 
+    new Promise((resolve) => {
+      setTimeout(() => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        
+        const timeout = setTimeout(() => resolve(""), 10000); // 10s timeout
+        
+        img.onload = () => {
+          clearTimeout(timeout);
+          try {
+            const canvas = document.createElement("canvas");
+            const maxDim = 800;
+            let ratio = Math.min(maxDim / img.naturalWidth, maxDim / img.naturalHeight);
+            ratio = Math.max(ratio, 1.5);
+            canvas.width = img.naturalWidth * ratio;
+            canvas.height = img.naturalHeight * ratio;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              ctx.imageSmoothingEnabled = true;
+              ctx.imageSmoothingQuality = "high";
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              resolve(canvas.toDataURL("image/jpeg", 0.95));
+            } else {
+              resolve("");
+            }
+          } catch {
+            resolve("");
+          }
+        };
+        
+        img.onerror = () => {
+          clearTimeout(timeout);
+          resolve("");
+        };
+        
+        img.src = url + (url.includes("?") ? "&" : "?") + "_t=" + Date.now();
+      }, delay);
+    });
+
+  // Retry with exponential backoff
+  for (let i = 0; i < retries; i++) {
+    const delay = i * 2000; // 0s, 2s, 4s
+    const result = await attemptLoad(delay);
+    if (result && result !== "") return result;
+  }
+  return "";
+};
+// ── Generate Catalog PDF ─────────────────────────────────────────────────
+  const generateCatalogPDF = async () => {
+    if (!pdfContainerRef.current) return;
+
+    const productsToExport = filteredProducts.length > 0 ? filteredProducts : products;
+    if (productsToExport.length === 0) {
+      toast.error("No products available to generate catalog");
+      return;
+    }
+
+    console.time('PDF Generation');
+
+    const pdf = new jsPDF("p", "mm", "a4", false);
+    const pageWidth = 210;
+    const pageHeight = 297;
+    const margin = 15;
+    const contentWidth = pageWidth - 2 * margin;
+    const contentHeight = pageHeight - 2 * margin;
+    const imgSectionHeight = contentHeight * 0.7;
+    const detailsHeight = contentHeight * 0.3;
+    const imgWidth = contentWidth * 0.8;
+
+    pdfContainerRef.current.innerHTML = "";
+
+    const toastId = toast.loading("🔄 Generating catalog...");
+
+    // PARALLEL IMAGE LOADING - HUGE SPEEDUP
+    const productData = await Promise.all(
+      productsToExport.map(async (product) => {
+        let imgBase64 = "";
+
+        try {
+          if (product.image) {
+            const imgUrl = getProxiedImageUrl(product.image);
+            imgBase64 = await loadImageAsBase64(imgUrl);
+          }
+        } catch (e) {
+          console.error("Image load failed for", product.name, e);
+        }
+
+        return { product, imgBase64 };
+      })
+    );
+
+
+    try {
+      let pageIndex = 0;
+
+      for (const {product, imgBase64} of productData) {
+        // Parse attributes safely
+        let attributes: Record<string, string> = {};
+        try {
+          attributes = typeof product.attributes === "string" ? JSON.parse(product.attributes) : product.attributes;
+        } catch (e) {
+          console.error("Attributes parse failed", e);
+        }
+        
+        let designNo = product.name.slice(0, 20) + "...";
+        const designMatch = product.name.match(/Design No:\\s*([\\d]+)/i);
+        if (designMatch) designNo = designMatch[1];
+        else if (attributes.design) designNo = attributes.design;
+
+        const isPhoneBusiness = Number(product.business_type_id) === 1;
+        
+        // Garments variants
+        const variants = product.variants || [];
+        const sizes = [...new Set(variants.map((v: any) => v.size).filter(Boolean))];
+        const sizeRates: Record<string, number> = {};
+        variants.forEach((v: any) => {
+          if (v.size && v.rate) sizeRates[v.size] = v.rate;
+        });
+        
+        // Phone specs
+        const model = attributes.model || product.model || product.name.slice(0, 25) + (product.name.length > 25 ? "..." : "");
+        const ram = attributes.ram || "N/A";
+        const storage = attributes.storage || "N/A";
+        const phoneConfig = `${ram}/${storage}`;
+        const phoneSpecs = [phoneConfig];
+        const phonePrices = [product.price];
+        const headerHTML = pageIndex === 0 ? `
+        <div style="
+          position: absolute;
+          top: 5mm;
+          right: 10mm;
+          font-size: 12pt;
+          font-weight: bold;
+          color: #2563eb;
+          border-bottom: 1px solid #e5e7eb;
+          padding-bottom: 2mm;
+        ">
+          ${user?.company_name || ""}
+        </div>
+      ` : "";
+        
+        const singlePrice = product.price;
+
+        // Build table HTML
+        let tableHTML = "";
+        if (isPhoneBusiness) {
+          tableHTML = `
+            <div style="width: 100%; background: white; border-radius: 4mm; padding: 4mm; box-shadow: 0 1mm 2mm rgba(0,0,0,0.1);">
+              <div style="font-size: 11pt; font-weight: bold; margin-bottom: 2mm;">Model: ${model}</div>
+              <table style="width: 100%; border-collapse: collapse; font-size: 10pt; text-align: center;">
+                <tr>
+                  <td style="border: 1px solid #000; padding: 2mm; font-weight: bold;">Config</td>
+                  ${phoneSpecs.map(spec => `<td style="border: 1px solid #000; padding: 2mm; font-weight: bold;">${spec}</td>`).join("")}
+                </tr>
+                <tr>
+                  <td style="border: 1px solid #000; padding: 2mm; font-weight: bold;">MRP</td>
+                  ${phonePrices.map(p => `<td style="border: 1px solid #000; padding: 2mm;">₹${p.toLocaleString('en-IN')}</td>`).join("")}
+                </tr>
+              </table>
+            </div>
+          `;
+        } else if (sizes.length > 0) {
+          // Garment table
+          tableHTML = `
+            <div style="width: 100%; background: white; border-radius: 4mm; padding: 4mm; box-shadow: 0 1mm 2mm rgba(0,0,0,0.1);">
+              <div style="font-size: 11pt; font-weight: bold; margin-bottom: 2mm;">Design No : ${designNo}</div>
+              <table style="width: 100%; border-collapse: collapse; font-size: 10pt; text-align: center;">
+                <tr>
+                  <td style="border: 1px solid #000; padding: 2mm; font-weight: bold;">Size</td>
+                  ${sizes.map(size => `<td style="border: 1px solid #000; padding: 2mm; font-weight: bold;">${size}</td>`).join("")}
+                </tr>
+                <tr>
+                  <td style="border: 1px solid #000; padding: 2mm; font-weight: bold;">MRP</td>
+                  ${sizes.map(size => `<td style="border: 1px solid #000; padding: 2mm;">${sizeRates[size]?.toLocaleString("en-IN") || "-"}</td>`).join("")}
+                </tr>
+              </table>
+            </div>
+          `;
+        } else {
+          tableHTML = `<div style="width: 100%; padding: 6mm; background: white; text-align: center;">₹${singlePrice.toLocaleString('en-IN')}</div>`;
+        }
+
+
+        // Create DOM (unchanged for now - next step canvas)
+        const productDiv = document.createElement("div");
+        productDiv.style.width = `${contentWidth}mm`;
+        productDiv.style.height = `${contentHeight}mm`;
+        productDiv.style.padding = "0";
+        productDiv.style.backgroundColor = "#fafbfc";
+        productDiv.style.fontFamily = "-apple-system, BlinkMacSystemFont, sans-serif";
+        productDiv.style.display = "flex";
+        productDiv.style.flexDirection = "column";
+        productDiv.style.alignItems = "center";
+        productDiv.style.color = "#1f2937";
+        productDiv.innerHTML = `
+          <div style="
+            width: 100%;
+            height: ${imgSectionHeight}mm;
+            background: white;
+            border-radius: 0 0 8mm 8mm;
+            overflow: hidden;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10mm;
+          ">
+
+            ${
+              imgBase64
+                ? `<img 
+                    src="${imgBase64}" 
+                    style="
+                      max-width: ${imgWidth}mm;
+                      max-height: 100%;
+                      object-fit: contain;
+                    "
+                  />`
+                : `<div style="
+                    width: 80mm;
+                    height: 80mm;
+                    background: #e5e7eb;
+                    border-radius: 8mm;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: #9ca3af;
+                    font-size: 12pt;
+                    border: 2px dashed #d1d5db;
+                  ">
+                    No Image
+                  </div>`
+            }
+
+            ${
+              pageIndex === 0
+                ? `<div style="
+                    position: absolute;
+                    top: 4mm;
+                    right: 4mm;
+                    background: rgba(255,255,255,0.85);
+                    padding: 2mm 4mm;
+                    border-radius: 2mm;
+                    font-size: 10pt;
+                    font-weight: bold;
+                    color: #2563eb;
+                    max-width: 60%;
+                    text-align: right;
+                  ">
+                    ${user?.company_name || ""}
+                  </div>`
+                : ""
+            }
+
+          </div>
+
+          <div style="width: 100%; height: ${detailsHeight}mm; padding: 8mm 12mm; box-sizing: border-box; display: flex; flex-direction: column; justify-content: flex-start; background: white; border-radius: 8mm 8mm 0 0;">
+            
+            <div style="text-align: center; margin-bottom: 4mm;">
+              <h2 style="font-size: 16pt; font-weight: bold; color: #1f2937; margin: 0 0 2mm 0;">
+                ${product.name}
+              </h2>
+              
+            </div>
+
+            ${tableHTML}
+
+          </div>
+        `;
+
+
+        pdfContainerRef.current.appendChild(productDiv);
+
+        // Wait for image if present
+        const pdfImg = productDiv.querySelector("img") as HTMLImageElement | null;
+        if (pdfImg && imgBase64) {
+          await new Promise((resolve) => {
+            let loaded = false;
+            const timeoutId = setTimeout(() => resolve(true), 2000); // Reduced timeout
+            
+            if (pdfImg.complete && pdfImg.naturalWidth > 0) {
+              clearTimeout(timeoutId);
+              resolve(true);
+              return;
+            }
+            
+            const onLoad = () => {
+              if (!loaded) {
+                loaded = true;
+                pdfImg.onload = null;
+                pdfImg.onerror = null;
+                clearTimeout(timeoutId);
+                resolve(true);
+              }
+            };
+            pdfImg.onload = onLoad;
+            pdfImg.onerror = onLoad;
+          });
+        }
+
+        const canvas = await html2canvas(productDiv, {
+          scale: 2, // Reduced from 3
+          useCORS: true,
+          allowTaint: false,
+          logging: false,
+          backgroundColor: '#fafbfc',
+          imageTimeout: 3000,
+        });
+
+        const imgData = canvas.toDataURL('image/jpeg', 0.9); // JPEG faster
+        const pdfImgHeight = contentHeight * 0.95; // Fixed height
+
+        if (pageIndex > 0) pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', margin, margin, contentWidth, pdfImgHeight);
+
+        pdfContainerRef.current.removeChild(productDiv);
+
+        pageIndex++;
+      }
+
+      pdf.save('Product-Catalog.pdf');
+      toast.success(`✅ Catalog Exported for ${productsToExport.length} products!`, {
+        id: toastId,
+      });
+
+      console.timeEnd('PDF Generation');
+    } catch (error) {
+      console.error('PDF generation failed:', error);
+      toast.error('Failed to Exported Catalog.', {
+        id: toastId,
+      });
+    }
+  };
+
 
   // ── Place order ───────────────────────────────────────────────────────────
   const handlePlaceOrder = async () => {
@@ -436,7 +851,84 @@ const TakeOrder = () => {
                       className="pl-9 bg-white"
                     />
                   </div>
-                  <VoiceMicButton voiceState={voiceState} onStart={handleVoiceStart} onStop={stopListening} />
+                  
+                <VoiceMicButton 
+                  voiceState={voiceState} 
+                  micVolume={micVolume}
+                  onStart={handleVoiceStart} 
+                  onStop={stopListening} 
+                />
+                </div>
+
+                {/* Hidden PDF temp container */}
+                <div ref={pdfContainerRef} style={{ position: 'absolute', left: '-9999px', top: 0, width: '210mm', height: '297mm' }} />
+
+                {/* ── Filters ── */}
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-5"> 
+                  <div className="flex items-center gap-2 mb-3">
+                    <Search size={14} className="text-gray-400" />
+                    <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                      Filters
+                    </span>
+
+                    {(filterBrand !== "all" || filterCategory !== "all" || filterDesign || searchQuery) && (
+                      <button
+                        onClick={resetFilters}
+                        className="flex items-center gap-1 text-xs text-blue-600"
+                      >
+                        Reset
+                      </button>
+                    )}
+                    {Number(user?.business_type_id) === 2 && (
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={generateCatalogPDF}
+                        className="ml-2 h-8 px-3"
+                      >
+                        📄 Export Catalog
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                   
+                    {/* Brand */}
+                    {brands.length > 0 && (
+                      <select
+                        value={filterBrand}
+                        onChange={(e) => setFilterBrand(e.target.value)}
+                        className="h-9 text-sm bg-gray-50 border rounded px-2"
+                      >
+                        <option value="all">All Brands</option>
+                        {brands.map((b) => (
+                          <option key={b} value={b}>{b}</option>
+                        ))}
+                      </select>
+                    )}
+
+                    {/* Category */}
+                    {categories.length > 0 && (
+                      <select
+                        value={filterCategory}
+                        onChange={(e) => setFilterCategory(e.target.value)}
+                        className="h-9 text-sm bg-gray-50 border rounded px-2"
+                      >
+                        <option value="all">All Categories</option>
+                        {categories.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    )}
+
+                    {/* Design */}
+                    <Input
+                      placeholder="Search by design…"
+                      value={filterDesign}
+                      onChange={(e) => setFilterDesign(e.target.value)}
+                      className="h-9 text-sm bg-gray-50"
+                    />
+                  </div>
                 </div>
 
                 {/* Live transcript */}
@@ -446,10 +938,44 @@ const TakeOrder = () => {
                     <p className="text-sm italic text-blue-700">"{rawTranscript}"</p>
                   </div>
                 )}
-                {voiceState === "error" && !rawTranscript && errorMessage && (
+                {showError && voiceState === "error" && !rawTranscript && errorMessage && (
                   <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-100">
-                    <p className="text-sm text-red-600">{errorMessage}</p>
-                    <Button variant="outline" size="sm" className="mt-2" onClick={resetVoice}>Try Again</Button>
+                    <p className="text-sm text-red-600 mb-2">{errorMessage}</p>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={resetVoice}>Try Again</Button>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => {
+                          resetVoice();
+                          startListening();
+                        }}
+                      >
+                        🔄 Retry Auto
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Mic volume indicator */}
+                {(voiceState === "listening" || voiceState === "processing") && (
+                  <div className="mb-4 p-3 rounded-xl bg-blue-50 border border-blue-100 flex items-center gap-3">
+                    <div className="flex-1">
+                      <p className="text-xs text-blue-400 mb-1">
+                        {voiceState === "listening" ? `🎤 Mic Level: ${Math.round(micVolume * 100)}%` : "Processing..."}
+                      </p>
+                      {voiceState === "listening" && rawTranscript && (
+                        <p className="text-sm italic text-blue-700">"{rawTranscript}"</p>
+                      )}
+                    </div>
+                    {voiceState === "listening" && (
+                      <div className="w-20 h-2 bg-gray-200 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-green-500 transition-all duration-200 rounded-full"
+                          style={{ width: `${Math.max(micVolume * 100, 5)}%` }}
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -468,9 +994,13 @@ const TakeOrder = () => {
                 ) : productsError ? (
                   <div className="text-center py-16 text-red-400"><p className="text-sm">{productsError}</p></div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     {filteredProducts.map((product) => (
-                      <ProductCard key={product.id} product={product} />
+                      <OmsCart
+                        key={product.id}
+                        product={product}
+                        showSize={Number(user?.business_type_id) === 2}
+                      />
                     ))}
                     {filteredProducts.length === 0 && (
                       <div className="text-center py-16 text-gray-400">

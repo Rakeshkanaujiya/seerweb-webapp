@@ -8,6 +8,8 @@ interface VoiceMicButtonProps {
   voiceState: VoiceState;
   onStart: () => void;
   onStop: () => void;
+  size?: "sm" | "lg";
+  micVolume?: number;
 }
 
 const VoiceMicButton = ({ voiceState, onStart, onStop }: VoiceMicButtonProps) => {

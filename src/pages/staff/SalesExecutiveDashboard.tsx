@@ -1,10 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import Navbar from "@/components/Navbar";
-import SearchBar from "@/components/SearchBar";
-import ProductCard from "@/components/ProductCard";
 import { useAuth } from "@/context/AuthContext";
-import { Product, Order, OrderStatus, Retailer, Staff } from "@/types";
+import { Product } from "@/types";
 import { apiUrl } from "@/url";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -21,98 +19,118 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import {
-  Plus, Minus, Trash2, Phone, MapPin, Search,
-  User, Package, ShoppingCart, Store,
+  Minus, Plus, Trash2, Phone, MapPin, Search,
+  User, Package, ShoppingCart, Store, X,
 } from "lucide-react";
 import { useCart } from "@/context/CartContext";
 import Sidebar from "@/components/Sidebar";
+import OmsCart from "@/components/OmsCart";
+import { Retailer } from "@/types";
+import { useBusinessSchema } from "@/hooks/useBusinessSchema";
 
 const SalesExecutiveDashboard = () => {
   const { user, isAuthenticated } = useAuth();
-  const { cart, clearCart, updateQuantity, removeFromCart } = useCart();
-  const navigate = useNavigate();
-  const isMobile = useIsMobile();
+  const {
+    cart, clearCart,
+    updateQuantity, updateVariantQty,
+    removeFromCart, removeVariant,
+    cartTotal, cartCount,
+  } = useCart();
+
+  const navigate   = useNavigate();
+  const isMobile   = useIsMobile();
+
   const [filteredRetailers, setFilteredRetailers] = useState<Retailer[]>([]);
-  const [retailers, setRetailers] = useState<Retailer[]>([]);
-  const [selectedRetailer, setSelectedRetailer] = useState<Retailer | null>(null);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
-  const [activeTab, setActiveTab] = useState<string>("retailers");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [notes, setNotes] = useState("");
+  const [retailers, setRetailers]                 = useState<Retailer[]>([]);
+  const [selectedRetailer, setSelectedRetailer]   = useState<Retailer | null>(null);
+  const [products, setProducts]                   = useState<Product[]>([]);
+  const [activeTab, setActiveTab]                 = useState<string>("retailers");
+  const [isSubmitting, setIsSubmitting]           = useState(false);
+  const [notes, setNotes]                         = useState("");
   const [isOrderConfirmOpen, setIsOrderConfirmOpen] = useState(false);
-  const [retailerSearch, setRetailerSearch] = useState("");
-  const [productSearch, setProductSearch] = useState("");
+  const [retailerSearch, setRetailerSearch]       = useState("");
+  const [searchQuery, setSearchQuery]             = useState("");
+  const [loadingProducts, setLoadingProducts]     = useState(false);
 
-  const handleQuantityChange = (productId: string, change: number, currentQty: number) => {
-    const newQty = currentQty + change;
-    if (newQty >= 1) updateQuantity(productId, newQty);
-  };
+  // ── Use shared hook so showSize stays consistent with TakeOrder ────────────
+  const { hasSize } = useBusinessSchema(user?.business_type_id ?? user?.business_type_id);
 
+  // ── Auth guard ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isAuthenticated) { navigate("/"); return; }
     if (user?.role !== "staff") { navigate("/dealer"); return; }
   }, [isAuthenticated, user, navigate]);
 
-  // ✅ Fixed: executiveid (not executive_id)
+  // ── Fetch retailers ────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!user?.id) return;
-    const fetchRetailers = async () => {
-      try {
-        const token = localStorage.getItem("token");
-        if (!token) return;
-        const response = await fetch(
-          `${apiUrl}/staff/get_retailers_by_executive?executiveid=${user.id}`,
-          { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
-        );
-        if (!response.ok) throw new Error("Failed to fetch retailers");
-        const data = await response.json();
-        setRetailers(data);
-        setFilteredRetailers(data);
-      } catch (err) {
-        console.error("Retailers fetch error:", err);
-      }
-    };
-    fetchRetailers();
-  }, [user?.id]);
+  if (!user?.id) return;
+  console.log("Fetching retailers for user.id:", user?.id);  // ← add
+  (async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) { console.error("No token!"); return; }  // ← add
+      const res = await fetch(
+        `${apiUrl}/staff/get_retailers_by_executive?executiveid=${user.id}`,
+        { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
+      );
+      const data = await res.json();
+      setRetailers(data);
+      setFilteredRetailers(data);
+    } catch(e) { console.error("Retailers fetch error", e); }
+  })();
+}, [user?.id]);
 
+
+  // ── Fetch products — same mapping as TakeOrder ────────────────────────────
   useEffect(() => {
     if (!user?.dealer_id) return;
-    const fetchProducts = async () => {
+    (async () => {
       try {
+        setLoadingProducts(true);
         const token = localStorage.getItem("token");
         if (!token) return;
-        const response = await fetch(`${apiUrl}/products?dealerid=${user.dealer_id}`, {
+        const res = await fetch(`${apiUrl}/products?dealerid=${user.dealer_id}`, {
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         });
-        if (!response.ok) throw new Error("Failed to fetch products");
-        const data = await response.json();
-        const formatted = (data.products || data).map((p: any) => ({
-          id: String(p.id),
-          name: p.name,
-          brand: p.brand,
-          model: p.model,
-          price: Number(p.price),
-          stock: Number(p.stock),
-          description: p.description,
-          dealerid: p.dealerid,
-          created_at: p.created_at,
-          image: p.image,
-        }));
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+
+        // ── Identical mapping to TakeOrder ────────────────────────────────
+        const formatted: Product[] = (data.products || data).map((item: any) => {
+          let attrs: Record<string, string> = {};
+          if (item.attributes) {
+            attrs = typeof item.attributes === "string"
+              ? JSON.parse(item.attributes)
+              : item.attributes;
+          }
+          return {
+            id:               String(item.id),
+            name:             item.name || "",
+            brand:            item.brand || attrs.brand || "",
+            model:            item.model || attrs.model || "",
+            color:            item.color || attrs.color || "",   // ← color mapped
+            price:            Number(item.price),
+            stock:            Number(item.stock),
+            description:      item.description || "",
+            dealer_id:        Number(item.dealerid),
+            dealerid:         Number(item.dealerid),
+            image:            item.image || null,
+            attributes:       attrs,
+            business_type_id: item.business_type_id ?? null,
+            variants:         item.variants ?? [],               // ← variants mapped
+          };
+        });
         setProducts(formatted);
-        setFilteredProducts(formatted);
-      } catch (err) {
-        console.error("Products fetch error:", err);
-      }
-    };
-    fetchProducts();
+      } catch { console.error("Products fetch error"); }
+      finally { setLoadingProducts(false); }
+    })();
   }, [user?.dealer_id]);
 
-  // Live retailer search
+  // ── Live retailer search ───────────────────────────────────────────────────
   useEffect(() => {
     if (!retailerSearch.trim()) { setFilteredRetailers(retailers); return; }
     const q = retailerSearch.toLowerCase();
-    setFilteredRetailers(retailers.filter(r =>
+    setFilteredRetailers(retailers.filter((r) =>
       r.name?.toLowerCase().includes(q) ||
       r.store_name?.toLowerCase().includes(q) ||
       r.phone?.includes(q) ||
@@ -120,57 +138,74 @@ const SalesExecutiveDashboard = () => {
     ));
   }, [retailerSearch, retailers]);
 
-  // Live product search
-  useEffect(() => {
-    if (!productSearch.trim()) { setFilteredProducts(products); return; }
-    const q = productSearch.toLowerCase();
-    setFilteredProducts(products.filter(p =>
+  // ── Filtered products ──────────────────────────────────────────────────────
+  const filteredProducts = useMemo(() => {
+    if (!searchQuery.trim()) return products;
+    const q = searchQuery.toLowerCase();
+    return products.filter((p) =>
       p.name.toLowerCase().includes(q) ||
-      p.brand.toLowerCase().includes(q) ||
-      p.model.toLowerCase().includes(q)
-    ));
-  }, [productSearch, products]);
+      (p.brand || "").toLowerCase().includes(q) ||
+      (p.model || "").toLowerCase().includes(q) ||
+      Object.values(p.attributes ?? {}).some((v) => String(v).toLowerCase().includes(q))
+    );
+  }, [products, searchQuery]);
 
+  // ── Place order — same payload structure as TakeOrder ─────────────────────
   const handlePlaceOrder = async () => {
-    if (!selectedRetailer) return toast.error("Select a customer first!");
-    if (cart.items.length === 0) return toast.error("Cart is empty!");
+    if (!selectedRetailer) { toast.error("Select a customer first!"); return; }
+    if (!cart.items.length) { toast.error("Cart is empty!"); return; }
+
     setIsSubmitting(true);
     try {
       const token = localStorage.getItem("token");
+
+      const orderItems = cart.items.flatMap((item) =>
+        item.variants.map((v) => ({
+          productId:  item.productId,
+          variantId:  v.variantId,
+          size:       v.size,
+          color:      v.color,
+          quantity:   v.quantity,
+          price:      v.price,
+          subtotal:   v.price * v.quantity,
+          rack:       v.rack || "",
+          attributes_snapshot: {
+            ...item.attributes,
+            brand:            item.brand,
+            model:            item.model || "",
+            business_type_id: item.businessTypeId,
+          },
+        }))
+      );
+
       const res = await fetch(`${apiUrl}/orders`, {
-        method: "POST",
+        method:  "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          retailerId: selectedRetailer.id,
+          retailerId:   selectedRetailer.id,
           retailerName: selectedRetailer.name,
-          dealerId: user?.dealer_id,
-          order_by: user?.role,
-          order_by_id: user?.id,
-          total: cart.items.reduce((sum, i) => sum + i.product.price * i.quantity, 0),
-          notes: notes || "",
-          items: cart.items.map(i => ({
-            productId: i.product.id,
-            quantity: i.quantity,
-            price: i.product.price,
-          })),
+          dealerId:     user?.dealer_id,
+          order_by:     user?.role,
+          order_by_id:  user?.id,
+          total:        cartTotal,
+          notes:        notes || "",
+          items:        orderItems,
         }),
       });
-      if (!res.ok) throw new Error("Failed to submit order");
+
+      if (!res.ok) throw new Error();
       clearCart();
       setIsOrderConfirmOpen(false);
       setNotes("");
       localStorage.removeItem("selectedRetailer");
       toast.success("Order submitted successfully!");
       navigate("/staff/sales_report");
-    } catch (err) {
-      console.error("Order submission error:", err);
+    } catch {
       toast.error("Failed to submit order.");
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  const cartTotal = cart.items.reduce((sum, i) => sum + i.product.price * i.quantity, 0);
 
   const avatarColors = [
     "bg-blue-100 text-blue-700", "bg-green-100 text-green-700",
@@ -178,16 +213,14 @@ const SalesExecutiveDashboard = () => {
     "bg-pink-100 text-pink-700", "bg-teal-100 text-teal-700",
   ];
 
+  // ── JSX ────────────────────────────────────────────────────────────────────
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
-      <div className="w-64 fixed top-0 left-0 h-full z-10">
-        <Sidebar />
-      </div>
+      <div className="w-64 fixed top-0 left-0 h-full z-10"><Sidebar /></div>
 
       <div className="flex-1 ml-64 flex flex-col">
         <Navbar />
 
-        {/* ✅ pt-16 */}
         <div className="flex-1 overflow-y-auto pt-16">
           <div className="container mx-auto px-4 py-6">
 
@@ -205,6 +238,11 @@ const SalesExecutiveDashboard = () => {
                     </TabsTrigger>
                     <TabsTrigger value="order" className="gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
                       <Package size={14} /> Create Order
+                      {cartCount > 0 && (
+                        <span className="ml-1 bg-red-500 text-white text-[10px] font-bold rounded-full h-4 w-4 flex items-center justify-center">
+                          {cartCount}
+                        </span>
+                      )}
                     </TabsTrigger>
                   </TabsList>
                 </ScrollArea>
@@ -215,6 +253,11 @@ const SalesExecutiveDashboard = () => {
                   </TabsTrigger>
                   <TabsTrigger value="order" className="gap-2 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
                     <Package size={14} /> Create Order
+                    {cartCount > 0 && (
+                      <span className="ml-1 bg-red-500 text-white text-[10px] font-bold rounded-full h-4 w-4 flex items-center justify-center">
+                        {cartCount}
+                      </span>
+                    )}
                   </TabsTrigger>
                 </TabsList>
               )}
@@ -233,7 +276,6 @@ const SalesExecutiveDashboard = () => {
                   )}
                 </div>
 
-                {/* Search */}
                 <div className="relative mb-4 max-w-sm">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <Input
@@ -278,6 +320,7 @@ const SalesExecutiveDashboard = () => {
                             </p>
                           </div>
                         </div>
+
                         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
                           <Button
                             size="sm"
@@ -323,10 +366,13 @@ const SalesExecutiveDashboard = () => {
 
               {/* ── Create Order Tab ── */}
               <TabsContent value="order">
+                {/* Selected customer banner */}
                 {!selectedRetailer ? (
                   <div className="mb-5 flex items-center gap-3 bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3">
                     <span className="text-yellow-500 text-lg">⚠️</span>
-                    <p className="text-sm text-yellow-700">Please select a customer from the <strong>Customers</strong> tab first.</p>
+                    <p className="text-sm text-yellow-700">
+                      Please select a customer from the <strong>Customers</strong> tab first.
+                    </p>
                     <Button size="sm" variant="outline" className="ml-auto border-yellow-300 text-yellow-700 hover:bg-yellow-100" onClick={() => setActiveTab("retailers")}>
                       Go to Customers
                     </Button>
@@ -346,63 +392,106 @@ const SalesExecutiveDashboard = () => {
                   </div>
                 )}
 
-                {/* Product Search */}
-                <div className="relative max-w-md mb-4">
+                {/* Search */}
+                <div className="relative max-w-md mb-5">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <Input
                     placeholder="Search by name, brand, or model..."
-                    value={productSearch}
-                    onChange={(e) => setProductSearch(e.target.value)}
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
                     className="pl-9 bg-white"
                   />
                 </div>
 
-                {/* Product Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredProducts.length > 0 ? (
-                    filteredProducts.map((p) => <ProductCard key={p.id} product={p} />)
-                  ) : (
-                    <div className="col-span-3 text-center py-16 text-gray-400">
-                      <Package className="h-10 w-10 mx-auto mb-3 opacity-30" />
-                      <p className="text-sm">No products found.</p>
-                    </div>
-                  )}
-                </div>
+                {!loadingProducts && (
+                  <p className="text-xs text-gray-400 mb-3">
+                    {filteredProducts.length} product{filteredProducts.length !== 1 ? "s" : ""} available
+                  </p>
+                )}
 
-                {/* Cart Summary */}
+                {/* ── Products grid using OmsCart (same as TakeOrder) ── */}
+                {loadingProducts ? (
+                  <div className="text-center py-16 text-gray-400">
+                    <Package className="h-10 w-10 mx-auto mb-3 opacity-30 animate-pulse" />
+                    <p className="text-sm">Loading products...</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {filteredProducts.map((product) => (
+                      <OmsCart
+                        key={product.id}
+                        product={product}
+                        showSize={hasSize}   // ← from useBusinessSchema hook
+                      />
+                    ))}
+                    {filteredProducts.length === 0 && (
+                      <div className="col-span-4 text-center py-16 text-gray-400">
+                        <Package className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                        <p className="text-sm">No products found.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Cart Summary — same grouped structure as TakeOrder ── */}
                 {cart.items.length > 0 && (
                   <Card className="mt-6 p-5 shadow-md bg-white border-gray-100 max-w-lg">
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
                         <ShoppingCart size={16} className="text-blue-600" /> Cart Summary
                       </h3>
-                      <Badge variant="secondary" className="text-xs">{cart.items.length} item{cart.items.length !== 1 ? "s" : ""}</Badge>
+                      <Badge variant="secondary" className="text-xs">
+                        {cartCount} item{cartCount !== 1 ? "s" : ""}
+                      </Badge>
                     </div>
 
-                    <ul className="divide-y divide-gray-50 mb-4">
-                      {cart.items.map((item) => (
-                        <li key={item.product.id} className="py-2 flex justify-between items-center gap-3">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <span className="text-sm text-gray-800 truncate">{item.product.name}</span>
-                            <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden flex-shrink-0">
-                              <button onClick={() => handleQuantityChange(item.product.id, -1, item.quantity)} className="px-2 py-1 text-gray-500 hover:bg-gray-50 transition-colors">
-                                <Minus size={11} />
-                              </button>
-                              <span className="px-2 text-xs font-medium text-gray-800">{item.quantity}</span>
-                              <button onClick={() => handleQuantityChange(item.product.id, 1, item.quantity)} className="px-2 py-1 text-gray-500 hover:bg-gray-50 transition-colors">
-                                <Plus size={11} />
+                    <div className="space-y-3 mb-4">
+                      {cart.items.map((item) => {
+                        const itemTotal = item.variants.reduce((s, v) => s + v.price * v.quantity, 0);
+                        return (
+                          <div key={item.productId} className="border border-gray-100 rounded-lg overflow-hidden">
+                            {/* Product header */}
+                            <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-100">
+                              <p className="text-sm font-semibold text-gray-900 flex-1 truncate">{item.productName}</p>
+                              <span className="text-sm font-bold text-blue-600 flex-shrink-0">₹{itemTotal.toLocaleString("en-IN")}</span>
+                              <button onClick={() => removeFromCart(item.productId)} className="text-red-400 hover:text-red-600 flex-shrink-0 ml-1">
+                                <Trash2 size={13} />
                               </button>
                             </div>
+                            {/* Variant rows */}
+                            {item.variants.map((v) => (
+                              <div key={`${item.productId}_${v.variantId}`} className="flex items-center gap-2 px-3 py-1.5">
+                                <div className="flex items-center gap-1 flex-1 min-w-0">
+                                  {v.size && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 flex-shrink-0">{v.size}</span>}
+                                  {v.color && <span className="text-xs text-gray-400 truncate">{v.color}</span>}
+                                  {!v.size && !v.color && <span className="text-xs text-gray-400">Standard</span>}
+                                </div>
+                                <span className="text-xs text-gray-400 flex-shrink-0">₹{v.price}</span>
+                                <div className="flex items-center border border-gray-200 rounded overflow-hidden flex-shrink-0">
+                                  <button
+                                    onClick={() => v.variantId === 0 ? updateQuantity(item.productId, v.quantity - 1) : updateVariantQty(item.productId, v.variantId, v.quantity - 1)}
+                                    className="px-1.5 py-1 text-gray-500 hover:bg-gray-50"
+                                  ><Minus size={10} /></button>
+                                  <span className="px-2 text-xs font-medium text-gray-800 min-w-[20px] text-center">{v.quantity}</span>
+                                  <button
+                                    onClick={() => v.variantId === 0 ? updateQuantity(item.productId, v.quantity + 1) : updateVariantQty(item.productId, v.variantId, v.quantity + 1)}
+                                    disabled={v.quantity >= v.stock}
+                                    className="px-1.5 py-1 text-gray-500 hover:bg-gray-50 disabled:opacity-30"
+                                  ><Plus size={10} /></button>
+                                </div>
+                                <span className="text-xs font-semibold text-gray-800 w-16 text-right flex-shrink-0">
+                                  ₹{(v.price * v.quantity).toLocaleString("en-IN")}
+                                </span>
+                                <button
+                                  onClick={() => v.variantId === 0 ? removeFromCart(item.productId) : removeVariant(item.productId, v.variantId)}
+                                  className="text-red-400 hover:text-red-600 flex-shrink-0"
+                                ><X size={11} /></button>
+                              </div>
+                            ))}
                           </div>
-                          <div className="flex items-center gap-3 flex-shrink-0">
-                            <span className="text-sm font-semibold text-gray-900">₹{(item.product.price * item.quantity).toLocaleString("en-IN")}</span>
-                            <button onClick={() => removeFromCart(item.product.id)} className="text-red-400 hover:text-red-600 transition-colors">
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
+                        );
+                      })}
+                    </div>
 
                     <Separator className="my-3" />
                     <div className="flex justify-between font-bold text-gray-900 text-sm mb-4">
@@ -424,7 +513,7 @@ const SalesExecutiveDashboard = () => {
 
             {/* Order Confirmation Dialog */}
             <Dialog open={isOrderConfirmOpen} onOpenChange={setIsOrderConfirmOpen}>
-              <DialogContent className="sm:max-w-lg">
+              <DialogContent className="max-w-lg">
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
                     <div className="h-7 w-7 rounded-lg bg-blue-100 flex items-center justify-center">
@@ -445,22 +534,40 @@ const SalesExecutiveDashboard = () => {
                       </div>
                     </div>
                   )}
-                  <div className="bg-gray-50 rounded-lg p-3 space-y-2">
-                    {cart.items.map((item) => (
-                      <div key={item.product.id} className="flex justify-between text-sm">
-                        <span className="text-gray-700">{item.product.name} <span className="text-gray-400">×{item.quantity}</span></span>
-                        <span className="font-medium text-gray-900">₹{(item.product.price * item.quantity).toLocaleString("en-IN")}</span>
-                      </div>
-                    ))}
+
+                  <div className="bg-gray-50 rounded-lg p-3 space-y-2 max-h-48 overflow-y-auto">
+                    {cart.items.map((item) =>
+                      item.variants.map((v) => (
+                        <div key={`${item.productId}_${v.variantId}`} className="flex justify-between text-sm">
+                          <span className="text-gray-700 flex items-center gap-1.5">
+                            {item.productName}
+                            {v.size && (
+                              <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded-full font-medium">{v.size}</span>
+                            )}
+                            <span className="text-gray-400">×{v.quantity}</span>
+                          </span>
+                          <span className="font-medium text-gray-900 flex-shrink-0">
+                            ₹{(v.price * v.quantity).toLocaleString("en-IN")}
+                          </span>
+                        </div>
+                      ))
+                    )}
                   </div>
+
                   <Separator />
                   <div className="flex justify-between font-bold text-gray-900">
                     <span>Total</span>
                     <span className="text-blue-600">₹{cartTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
                   </div>
+
                   <div className="space-y-1.5">
                     <label className="text-sm font-medium text-gray-700">Notes (Optional)</label>
-                    <Textarea placeholder="Add special instructions..." value={notes} onChange={(e) => setNotes(e.target.value)} className="h-20 resize-none" />
+                    <Textarea
+                      placeholder="Add special instructions..."
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      className="h-20 mt-1 resize-none"
+                    />
                   </div>
                 </div>
 

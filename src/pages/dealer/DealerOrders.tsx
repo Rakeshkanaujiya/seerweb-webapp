@@ -203,7 +203,7 @@ const DealerOrders = () => {
   ];
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
+    <div className="flex h-screen overflow-hidden">
       <div className="w-64 fixed top-0 left-0 h-full z-10">
         <Sidebar />
       </div>

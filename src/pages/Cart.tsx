@@ -458,7 +458,7 @@ const Cart = () => {
                         onClick={() => {
                           if      (user?.role === "staff")    navigate("/staff");
                           else if (user?.role === "retailer") navigate("/retailer/products");
-                          else                                navigate("/dealer");
+                          else                                navigate("/dealer/takeorder");
                         }}
                         className="w-full mt-2 text-gray-500 hover:text-gray-700 text-sm"
                       >
@@ -480,7 +480,7 @@ const Cart = () => {
                   onClick={() => {
                     if      (user?.role === "staff")    navigate("/staff");
                     else if (user?.role === "retailer") navigate("/retailer/products");
-                    else                                navigate("/dealer");
+                    else                                navigate("/dealer/takeorder");
                   }}
                   className="bg-blue-600 hover:bg-blue-700 text-white"
                 >
@@ -515,7 +515,7 @@ const Cart = () => {
                 )}
 
                 {/* Order line items */}
-                <div className="bg-gray-50 rounded-lg p-3 space-y-2 max-h-48 overflow-y-auto">
+                <div className="rounded-lg p-3 space-y-2 max-h-48 overflow-y-auto">
                   {cart.items.map((item) =>
                     item.variants.map((v) => (
                       <div key={`${item.productId}_${v.variantId}`} className="flex justify-between text-sm">

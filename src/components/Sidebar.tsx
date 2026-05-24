@@ -121,11 +121,11 @@ const Sidebar = () => {
     if (user?.role === "staff") {
       return (
         <>
-          <Link to="/staff/dashboard" className={linkClasses("/staff/dashboard")}>
+          <Link to="/staff" className={linkClasses("/staff/dashboard")}>
             <LayoutDashboard className="h-4 w-4" />
             Dashboard
           </Link>
-          <Link to="/staff" className={linkClasses("/staff")}>
+          <Link to="/staff/take_order" className={linkClasses("/take_order")}>
             <ClipboardList className="h-4 w-4" />
             Create Order
           </Link>
@@ -164,7 +164,7 @@ const Sidebar = () => {
         ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
         {/* Header Branding (ONLY HERE) */}
-        <div className="flex h-16 items-center gap-3 border-b border-white/10 px-5">
+        <div className="flex h-16 bg-blue-500 items-center gap-3 border-b border-white/10 px-5">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600">
             <Package className="h-5 w-5 text-white" />
           </div>

@@ -262,19 +262,64 @@ const ManageRetailers = () => {
     }
   };
 
-  const validateForm = (): boolean => {
+  const validateForm = async (): Promise<boolean> => {
     const { username, name, email, phone } = formData;
-    if (!username || !name || !email || !phone) { toast.error("Please fill all required fields"); return false; }
-    const existingRetailer = retailers.find(
-      (r) => r.username?.toLowerCase() === username.toLowerCase() && (!isEditing || r.id !== currentRetailer?.id)
+
+    // Basic required field check
+    if (!username || !name || !email || !phone) {
+      toast.error("Please fill all required fields");
+      return false;
+    }
+
+    // Local duplicate check first (fast)
+    const duplicateUsername = retailers.find(
+      (r) => r.username?.toLowerCase() === username.toLowerCase() &&
+            (!isEditing || String(r.id) !== String(currentRetailer?.id))
     );
-    if (existingRetailer) { toast.error("Username already exists"); return false; }
+    if (duplicateUsername) {
+      toast.error(`Username "${username}" is already taken. Please choose a different username.`);
+      return false;
+    }
+
+    const duplicateEmail = retailers.find(
+      (r) => r.email?.toLowerCase() === email.toLowerCase() &&
+            (!isEditing || String(r.id) !== String(currentRetailer?.id))
+    );
+    if (duplicateEmail) {
+      toast.error(`Email "${email}" is already registered to "${duplicateEmail.store_name}". Use a different email.`);
+      return false;
+    }
+
+    // Server-side duplicate check (checks full DB, not just current dealer)
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(
+        `${apiUrl}/retailers/check-duplicate?username=${encodeURIComponent(username)}&email=${encodeURIComponent(email)}&excludeId=${isEditing ? currentRetailer?.id : ""}`,
+        { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.duplicateUsername) {
+          toast.error(`Username "${username}" is already taken across the system.`);
+          return false;
+        }
+        if (data.duplicateEmail) {
+          toast.error(`Email "${email}" is already registered in the system.`);
+          return false;
+        }
+      }
+    } catch {
+      // If server check fails, local check already passed — allow submission
+      console.warn("Server duplicate check unavailable, proceeding with local validation only");
+    }
+
     return true;
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validateForm()) return;
+    const isValid = await validateForm(); // ← was: if (!validateForm()) return;
+    if (!isValid) return;
 
     try {
       const token = localStorage.getItem("token");
@@ -631,7 +676,28 @@ const ManageRetailers = () => {
                         <Label htmlFor="username" className="text-sm font-medium text-gray-700 flex items-center gap-1">
                           <User className="h-3.5 w-3.5 text-gray-400" /> Username <span className="text-red-500">*</span>
                         </Label>
-                        <Input id="username" name="username" value={formData.username} onChange={handleInputChange} placeholder="e.g. shopowner1" required />
+                        <Input
+                          id="username"
+                          name="username"
+                          value={formData.username}
+                          onChange={handleInputChange}
+                          placeholder="e.g. shopowner1"
+                          required
+                          className={
+                            retailers.some(
+                              (r) => r.username?.toLowerCase() === formData.username.toLowerCase() &&
+                                    (!isEditing || String(r.id) !== String(currentRetailer?.id))
+                            ) ? "border-red-400 focus-visible:ring-red-400" : ""
+                          }
+                        />
+                        {retailers.some(
+                          (r) => r.username?.toLowerCase() === formData.username.toLowerCase() &&
+                                (!isEditing || String(r.id) !== String(currentRetailer?.id))
+                        ) && (
+                          <p className="text-xs text-red-500 flex items-center gap-1">
+                            ⚠️ Username already taken
+                          </p>
+                        )}
                       </div>
                       <div className="space-y-1.5">
                         <Label htmlFor="name" className="text-sm font-medium text-gray-700 flex items-center gap-1">

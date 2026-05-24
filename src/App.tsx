@@ -20,8 +20,8 @@ import ManageDealers from "./pages/admin/ManageDealers";
 import NotFound from "./pages/NotFound";
 import DealerStaff from "./pages/dealer/ManageStaff";
 import SalesExecutiveDashboard from "./pages/staff/SalesExecutiveDashboard";
-import TakeOrder from "./pages/dealer/TakeOrder";
 import Orders from "./pages/staff/Orders";
+import TakeOrder from "./pages/dealer/TakeOrder";
 import DealerOrders from "./pages/dealer/DealerOrders";
 import RetailerDashboard from "./pages/customer/RetailerDashboard";
 import RetailerProfile from "./pages/customer/RetailerProfile";
@@ -64,7 +64,8 @@ const App = () => (
               <Route path="/dealer/staff" element={<Layout><DealerStaff /></Layout>} />
               <Route path="/dealer/custom-fields" element={<ManageCustomFields />} />
               <Route path="/staff/sales_report" element={<Layout><Orders /></Layout>} />
-              <Route path="/staff/dashboard" element={<Layout><StaffDashboard /></Layout>} />
+              <Route path="/staff/take_order" element={<Layout><SalesExecutiveDashboard /></Layout>} />
+              <Route path="/staff/" element={<Layout><StaffDashboard /></Layout>} />
               <Route path="/profile" element={<Layout><Profile /></Layout>} />
 
               {/* Not Found fallback */}

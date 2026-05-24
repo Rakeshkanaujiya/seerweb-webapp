@@ -8,6 +8,7 @@ import { apiUrl } from "@/url";
  */
 
 export function getImageUrl(imagePath: string | null | undefined): string | null {
+
   if (!imagePath) return null;
 
   // If already full URL, return as-is
@@ -23,4 +24,14 @@ export function getImageUrl(imagePath: string | null | undefined): string | null
 
   // ✅ FINAL CORRECT URL
   return `${base}/${cleanPath}`;
+}
+
+// Add this new helper alongside your existing getImageUrl
+export function getProxiedImageUrl(imagePath: string | null | undefined): string | null {
+  const directUrl = getImageUrl(imagePath);
+  if (!directUrl) return null;
+  
+  // Route through your CI proxy to avoid CORS in PDF generation
+  const base = apiUrl.replace(/\/$/, "");
+  return `${base}/products/proxy-image?url=${encodeURIComponent(directUrl)}`;
 }

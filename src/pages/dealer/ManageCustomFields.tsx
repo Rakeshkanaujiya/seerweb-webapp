@@ -211,7 +211,7 @@ const ManageCustomFields = () => {
 
   // ── JSX ─────────────────────────────────────────────────────────────────────
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
+    <div className="flex h-screen overflow-hidden">
       <div className="w-64 fixed top-0 left-0 h-full z-10"><Sidebar /></div>
 
       <div className="flex-1 ml-64 flex flex-col">
@@ -385,7 +385,7 @@ const ManageCustomFields = () => {
             <div className="space-y-1.5">
               <Label className="text-sm font-medium text-gray-700">Field Type</Label>
               {editing ? (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-gray-200 bg-gray-50 text-sm text-gray-600">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-gray-200 text-sm text-gray-600">
                   {typeIcon(editing.field_type)}
                   <span>{typeLabel(editing.field_type)}</span>
                   <span className="text-xs text-gray-400 ml-1">(cannot change after creation)</span>

@@ -38,8 +38,8 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const productColor = resolveProductColor(product);
 
   const attrPills = Object.entries(product.attributes ?? {})
-    .filter(([k, v]) => v && !["mrp", "size", "color", "Color", "colour", "Colour", "brand", "Brand", "model", "Model"].includes(k))
-    .slice(0, 2);
+.filter(([k, v]) => v && !["mrp", "size", "color", "Color", "colour", "Colour"].includes(k))
+.slice(0, 4);
 
   const handleIncrement   = () => setQuantity((p) => Math.min(p + 1, product.stock));
   const handleDecrement   = () => setQuantity((p) => Math.max(p - 1, 0));

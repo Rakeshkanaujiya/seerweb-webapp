@@ -1,18 +1,8 @@
-# Task: Show RAM and Storage in ProductCard.tsx
+# Voice Fuzzy Matching Enhancement TODO
 
-## Approved Plan Summary
-Integrate Cartbusinessconfig to dynamically display product specs (RAM, Storage, etc.) in ProductCard based on business_type_id and attributes.
-
-## Steps
-- [ ] Step 1: Create TODO.md (current)
-- [x] Step 2: Edit src/components/ProductCard.tsx to import config functions and render dynamic fields.
-
-- [x] Step 3: Test the changes by viewing pages with ProductCards (e.g., `npm run dev` if needed).
-
-- [x] Step 4: Mark complete and attempt_completion.
-
-
-Current progress: 4/4 ✅ All steps complete!
-
-
+  - [x] Step 1: Install fuse.js (`npm install fuse.js`) ✅ Running
+- [x] Step 2: Read current useVoiceOrder.ts content (done via tools) ✅
+- [x] Step 3: Implement parseWithFallback (fuzzy + regex) ✅ Created useVoiceFallback.ts
+- [x] Step 4: Chain in parseWithAI, update logic ✅ Integrated in useVoiceOrder.ts
+- [ ] Step 5: Test & complete
 
