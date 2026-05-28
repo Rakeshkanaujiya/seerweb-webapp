@@ -22,6 +22,8 @@ import { apiUrl } from "@/url";
 import Sidebar from "@/components/Sidebar";
 import { Package } from "lucide-react";
 import MainLayout from "@/components/MainLayoutProps";
+import { isGarmentsBusiness } from "@/lib/businessType";
+import { GarmentCartView } from "@/features/garments/GarmentCartView";
 
 interface RetailerOption {
   id:         number;
@@ -51,6 +53,25 @@ const Cart = () => {
 
   const needsRetailerSelection = user?.role === "staff" || user?.role === "dealer";
   const selectedRetailer = retailers.find((r) => String(r.id) === selectedRetailerId) ?? null;
+
+  const handleRetailerSelection = (retailerId: string) => {
+    const nextRetailer = retailers.find((r) => String(r.id) === retailerId);
+    const currentRetailer = retailers.find((r) => String(r.id) === selectedRetailerId);
+    const retailerChanged =
+      currentRetailer &&
+      nextRetailer &&
+      String(currentRetailer.id) !== String(nextRetailer.id);
+
+    if (retailerChanged && cart.items.length > 0) {
+      clearCart();
+      toast.info("Cart cleared because the retailer was changed.");
+    }
+
+    setSelectedRetailerId(retailerId);
+    if (nextRetailer) {
+      localStorage.setItem("selectedRetailer", JSON.stringify(nextRetailer));
+    }
+  };
 
   // ── Pre-select retailer saved from TakeOrder / SalesExecutiveDashboard ────
   useEffect(() => {
@@ -180,6 +201,18 @@ const Cart = () => {
       )
     : retailers;
 
+  if (isGarmentsBusiness(user?.business_type_id)) {
+    return (
+      <MainLayout>
+        <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.18),_transparent_28%),linear-gradient(180deg,_#fffdf8_0%,_#ffffff_32%,_#f8fafc_100%)] px-4 py-6">
+          <div className="mx-auto max-w-7xl">
+            <GarmentCartView />
+          </div>
+        </div>
+      </MainLayout>
+    );
+  }
+
   // ── JSX ───────────────────────────────────────────────────────────────────
   return (
     <MainLayout>
@@ -227,13 +260,19 @@ const Cart = () => {
                             <p className="text-sm font-medium text-green-900 truncate">{selectedRetailer.store_name || selectedRetailer.name}</p>
                             <p className="text-xs text-green-600">{selectedRetailer.name} · {selectedRetailer.phone}</p>
                           </div>
-                          <button onClick={() => setSelectedRetailerId("")} className="text-green-500 hover:text-green-700 text-xs underline flex-shrink-0">
+                          <button
+                            onClick={() => {
+                              setSelectedRetailerId("");
+                              localStorage.removeItem("selectedRetailer");
+                            }}
+                            className="text-green-500 hover:text-green-700 text-xs underline flex-shrink-0"
+                          >
                             Change
                           </button>
                         </div>
                       )}
 
-                      <Select value={selectedRetailerId} onValueChange={setSelectedRetailerId}>
+                      <Select value={selectedRetailerId} onValueChange={handleRetailerSelection}>
                         <SelectTrigger className={`w-full ${!selectedRetailerId ? "border-yellow-400" : "border-green-300"}`}>
                           <SelectValue placeholder="Select a customer..." />
                         </SelectTrigger>

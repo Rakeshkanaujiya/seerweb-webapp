@@ -3,7 +3,6 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { apiUrl } from "@/url";
 import { toast } from "sonner";
-import Navbar from "@/components/Navbar";
 import { DynamicSelect } from "@/components/DynamicSelect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +15,8 @@ import {
 } from "lucide-react";
 import React from "react";
 import MainLayout from "@/components/MainLayoutProps";
+import { isGarmentsBusiness } from "@/lib/businessType";
+import GarmentAddProduct from "@/features/garments/GarmentAddProduct";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -104,7 +105,7 @@ const MultiSizeSelect = ({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-const AddProduct = () => {
+const LegacyAddProduct = () => {
   const { user, isAuthenticated, loading } = useAuth();
   const navigate  = useNavigate();
   const location  = useLocation();
@@ -450,6 +451,9 @@ const AddProduct = () => {
                 {/* Dynamic Fields — 3 columns on large screens */}
                 {allFields.map((field) => {
                   const val = attrValues[field.field_key] ?? "";
+                  const supportsDynamicOptions =
+                    field.field_type === "select" ||
+                    ["brand", "design"].includes(field.field_key.toLowerCase());
                   const opts =
                     liveOptions[field.id] ??
                     (field.field_options ? JSON.parse(field.field_options) : []);
@@ -462,7 +466,7 @@ const AddProduct = () => {
                         {!!field.is_required && <span className="text-red-500">*</span>}
                       </Label>
 
-                      {field.field_type === "select" ? (
+                      {supportsDynamicOptions ? (
                         <DynamicSelect
                           schemaId={field.id}
                           fieldKey={field.field_key}
@@ -718,6 +722,16 @@ const AddProduct = () => {
           </div>
       </MainLayout>
   );
+};
+
+const AddProduct = () => {
+  const { user, isAuthenticated, loading } = useAuth();
+
+  if (!loading && isAuthenticated && isGarmentsBusiness(user?.business_type_id)) {
+    return <GarmentAddProduct />;
+  }
+
+  return <LegacyAddProduct />;
 };
 
 export default AddProduct;

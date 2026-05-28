@@ -30,6 +30,7 @@ import {
   ArrowUpDown,
   Clock,
   AlertTriangle,
+  Printer,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import * as XLSX from "xlsx";
@@ -44,6 +45,202 @@ interface OrdersListProps {
   staff:Staff[];
 }
 
+type OrderLineItem = Order["items"][number];
+
+interface GroupedSizeLine {
+  size: string;
+  qty: number;
+  rate: number;
+  mrp: number;
+}
+
+interface GroupedOrderItem {
+  key: string;
+  srNo: number;
+  bookingType: string;
+  description: string;
+  designNo: string;
+  setPcs: number;
+  color?: string;
+  sizes: GroupedSizeLine[];
+  totalQty: number;
+  totalRateAmount: number;
+  totalMrpAmount: number;
+}
+
+interface LinePricing {
+  rate: number;
+  mrp: number;
+}
+
+const SIZE_PRIORITY = [
+  "XS", "S", "M", "L", "XL", "XXL", "2XL", "3XL", "4XL", "5XL",
+  "28", "30", "32", "34", "36", "38", "40", "42", "44", "46",
+];
+
+const sizeRank = new Map(SIZE_PRIORITY.map((size, index) => [size, index]));
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const formatMoney = (value: number) =>
+  Number(value || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+const sortSizes = (sizes: string[]) =>
+  [...sizes].sort((left, right) => {
+    const leftRank = sizeRank.get(left.toUpperCase());
+    const rightRank = sizeRank.get(right.toUpperCase());
+    if (leftRank !== undefined || rightRank !== undefined) {
+      return (leftRank ?? Number.MAX_SAFE_INTEGER) - (rightRank ?? Number.MAX_SAFE_INTEGER);
+    }
+
+    const leftNumber = Number(left);
+    const rightNumber = Number(right);
+    if (!Number.isNaN(leftNumber) && !Number.isNaN(rightNumber)) {
+      return leftNumber - rightNumber;
+    }
+
+    return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
+  });
+
+const resolveLinePricing = (item: OrderLineItem, preferLowerPriceAsRate: boolean): LinePricing => {
+  console.log("resolveLinePricing:", item);
+  const snapshot = item.attributes_snapshot ?? {};
+  const snapshotRate = Number(snapshot.rate ?? snapshot.dealer_rate ?? snapshot.wholesale_rate ?? 0);
+  const snapshotMrp = Number(snapshot.mrp ?? 0);
+  const orderPrice = Number(item.price ?? 0);
+  const productPrice = Number(item.product?.price ?? 0);
+  const productMrp = Number(item.product?.mrp ?? 0);
+
+  if (snapshotRate > 0 || snapshotMrp > 0) {
+    return {
+      rate: snapshotRate > 0 ? snapshotRate : orderPrice || productPrice || snapshotMrp,
+      mrp: snapshotMrp > 0 ? snapshotMrp : Math.max(snapshotRate || 0, orderPrice || 0, productMrp || 0, productPrice || 0),
+    };
+  }
+
+  if (productMrp > 0) {
+    return {
+      rate: orderPrice || Math.min(productPrice || productMrp, productMrp),
+      mrp: Math.max(productMrp, orderPrice || 0, productPrice || 0),
+    };
+  }
+
+  if (preferLowerPriceAsRate && orderPrice > 0 && productPrice > 0 && orderPrice !== productPrice) {
+    return {
+      rate: Math.min(orderPrice, productPrice),
+      mrp: Math.max(orderPrice, productPrice),
+    };
+  }
+
+  return {
+    rate: orderPrice || productPrice || 0,
+    mrp: productPrice || orderPrice || 0,
+  };
+};
+
+const getItemMeta = (item: OrderLineItem, preferLowerPriceAsRate: boolean) => {
+  const snapshot = item.attributes_snapshot ?? {};
+  const garmentMeta = snapshot.garment_meta ?? {};
+  const pricing = resolveLinePricing(item, preferLowerPriceAsRate);
+  return {
+    bookingType: snapshot.booking_type ?? garmentMeta.booking_type ?? "Current",
+    designNo: snapshot.design_number ?? garmentMeta.design_number ?? garmentMeta.designNumber ?? "-",
+    mrp: Number(snapshot.mrp ?? garmentMeta.mrp ?? pricing.mrp),
+    rate: pricing.rate,
+    setQuantity: Number(snapshot.set_quantity ?? 0),
+    color: item.color ?? garmentMeta.selectedColor ?? snapshot.color ?? "",
+  };
+};
+
+const groupOrderItems = (order: Order, preferLowerPriceAsRate = false) => {
+  const groups = new Map<string, GroupedOrderItem>();
+
+  order.items.forEach((item) => {
+    const meta = getItemMeta(item, preferLowerPriceAsRate);
+    const size = String(item.size || "Single");
+    const rate = Number(meta.rate || item.price || item.product?.price || 0);
+    const mrp = Number(meta.mrp || rate);
+    const description = item.product?.name || "Product";
+    const groupKey = [
+      item.productId,
+      description,
+      meta.designNo,
+      meta.bookingType,
+      meta.color,
+    ].join("__");
+
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, {
+        key: groupKey,
+        srNo: groups.size + 1,
+        bookingType: meta.bookingType,
+        description,
+        designNo: meta.designNo,
+        setPcs: meta.setQuantity > 0 ? 1 : 0,
+        color: meta.color,
+        sizes: [],
+        totalQty: 0,
+        totalRateAmount: 0,
+        totalMrpAmount: 0,
+      });
+    }
+
+    const group = groups.get(groupKey)!;
+    const existingSize = group.sizes.find((entry) => entry.size === size);
+
+    if (existingSize) {
+      existingSize.qty += Number(item.quantity || 0);
+      existingSize.rate = rate;
+      existingSize.mrp = mrp;
+    } else {
+      group.sizes.push({
+        size,
+        qty: Number(item.quantity || 0),
+        rate,
+        mrp,
+      });
+    }
+
+    group.totalQty += Number(item.quantity || 0);
+    group.totalRateAmount += rate * Number(item.quantity || 0);
+    group.totalMrpAmount += mrp * Number(item.quantity || 0);
+    if (meta.setQuantity > 0) {
+      group.setPcs = 1;
+    }
+  });
+
+  const groupedItems = Array.from(groups.values()).map((group) => ({
+    ...group,
+    sizes: sortSizes(group.sizes.map((entry) => entry.size)).map(
+      (size) => group.sizes.find((entry) => entry.size === size)!
+    ),
+  }));
+
+  const allSizes = sortSizes(
+    Array.from(new Set(groupedItems.flatMap((group) => group.sizes.map((entry) => entry.size))))
+  );
+
+  const totals = groupedItems.reduce(
+    (accumulator, group) => ({
+      totalQty: accumulator.totalQty + group.totalQty,
+      totalRateAmount: accumulator.totalRateAmount + group.totalRateAmount,
+      totalMrpAmount: accumulator.totalMrpAmount + group.totalMrpAmount,
+    }),
+    { totalQty: 0, totalRateAmount: 0, totalMrpAmount: 0 }
+  );
+
+  return { groupedItems, allSizes, totals };
+};
+
 const OrdersList: React.FC<OrdersListProps> = ({
   orders,
   isAdmin = false,
@@ -53,6 +250,7 @@ const OrdersList: React.FC<OrdersListProps> = ({
   staff
 }) => {
   const { user } = useAuth();
+  const preferLowerPriceAsRate = Number(user?.business_type_id) === 2;
 
   const [localOrders, setLocalOrders] = useState<Order[]>(orders);
   const [filteredOrders, setFilteredOrders] = useState<Order[]>(orders);
@@ -69,6 +267,199 @@ const OrdersList: React.FC<OrdersListProps> = ({
   const [reportRetailerId, setReportRetailerId] = useState<string>("all");
   const [reportStaffId, setReportStaffId] = useState<string>("all");
   const [activeTabForOrder, setActiveTabForOrder] = useState<string>("all");
+
+  const selectedOrderGroups = useMemo(
+    () => (selectedOrder ? groupOrderItems(selectedOrder, preferLowerPriceAsRate) : null),
+    [preferLowerPriceAsRate, selectedOrder]
+  );
+  console.log("Selected Order Groups:", selectedOrder);
+  const handlePrintInvoice = (order: Order) => {
+    const invoiceWindow = window.open("", "_blank", "width=1200,height=900");
+    if (!invoiceWindow) return;
+
+    const orderDate = new Date(order.createdAt);
+    const { groupedItems, allSizes, totals } = groupOrderItems(order, preferLowerPriceAsRate);
+    const sizeColumns = allSizes
+      .map((size) => `<th>${escapeHtml(size)}</th>`)
+      .join("");
+    const rows = groupedItems
+      .map((group) => {
+        const sizeCells = allSizes
+          .map((size) => {
+            const line = group.sizes.find((entry) => entry.size === size);
+            if (!line) {
+              return `<td class="size-cell empty"></td>`;
+            }
+
+            return `
+              <td class="size-cell">
+                <div class="metric qty-label">Qty</div>
+                <div class="metric qty-value">${line.qty}</div>
+                <div class="metric rate-label">Rate</div>
+                <div class="metric rate-value">${formatMoney(line.rate)}</div>
+                <div class="metric mrp-label">MRP</div>
+                <div class="metric mrp-value">${formatMoney(line.mrp)}</div>
+              </td>
+            `;
+          })
+          .join("");
+
+        return `
+          <tr>
+            <td>${group.srNo}</td>
+            <td>${escapeHtml(group.bookingType)}</td>
+            <td>
+              <div class="desc-name">${escapeHtml(group.description)}</div>
+              ${group.color ? `<div class="desc-sub">${escapeHtml(group.color)}</div>` : ""}
+            </td>
+            <td>${group.setPcs || ""}</td>
+            <td>${escapeHtml(group.designNo)}</td>
+            <td class="metric-head">
+              <div class="metric qty-label">Qty</div>
+              <div class="metric rate-label">Rate</div>
+              <div class="metric mrp-label">MRP</div>
+            </td>
+            ${sizeCells}
+            <td>${group.totalQty}</td>
+            <td>Rs.${formatMoney(group.totalRateAmount)}</td>
+            <td>Rs.${formatMoney(group.totalMrpAmount)}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    invoiceWindow.document.write(`
+      <html>
+        <head>
+          <title>Invoice ${order.id}</title>
+          <style>
+            @page { size: A4 portrait; margin: 10mm; }
+            body { font-family: Arial, sans-serif; color: #111827; margin: 0; padding: 12px; }
+            .sheet { border: 2px solid #111827; padding: 12px; }
+            .brand { text-align: center; margin-bottom: 16px; }
+            .brand h1 { margin: 0; font-size: 28px; letter-spacing: 0.08em; }
+            .brand p { margin: 4px 0 0; font-size: 13px; color: #475569; }
+            .meta-grid { display: grid; grid-template-columns: 1.2fr 1.2fr 1fr; border: 2px solid #111827; border-bottom: 0; }
+            .meta-card { min-height: 120px; border-right: 2px solid #111827; }
+            .meta-card:last-child { border-right: 0; }
+            .meta-title { background: #111827; color: white; padding: 8px 10px; font-weight: 700; font-size: 18px; }
+            .meta-body { padding: 10px; font-size: 14px; line-height: 1.6; }
+            .remark { border: 2px solid #111827; border-top: 0; padding: 10px; font-size: 14px; margin-bottom: 18px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
+            thead { display: table-header-group; }
+            tr { page-break-inside: avoid; }
+            th, td { border: 1px solid #111827; padding: 6px; font-size: 12px; vertical-align: top; text-align: center; }
+            th { background: #f8fafc; text-transform: uppercase; letter-spacing: 0.04em; }
+            .left { text-align: left; }
+            .desc-name { font-weight: 700; text-align: left; }
+            .desc-sub { margin-top: 4px; font-size: 11px; color: #475569; text-align: left; }
+            .metric-head { min-width: 48px; }
+            .metric { line-height: 1.35; }
+            .qty-label, .qty-value { color: #dc2626; }
+            .rate-label, .rate-value { color: #16a34a; }
+            .mrp-label, .mrp-value { color: #1d4ed8; }
+            .size-cell { min-width: 64px; }
+            .empty { background: #fff; }
+            .total-row td { font-weight: 700; background: #f8fafc; }
+            .summary { display: grid; grid-template-columns: 1.3fr 1fr; border: 2px solid #111827; }
+            .terms { padding: 12px; border-right: 2px solid #111827; min-height: 160px; }
+            .totals { padding: 12px; }
+            .totals p { margin: 0 0 10px; font-size: 16px; font-weight: 700; }
+            .small { font-size: 12px; color: #475569; line-height: 1.5; }
+            .table-wrap { overflow: visible; }
+            @media print {
+              body { padding: 0; }
+              .sheet { border-width: 1px; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="sheet">
+            <div class="brand">
+              <h1>INVOICE</h1>
+              <p>Garments Wholesale Order Summary</p>
+            </div>
+
+            <div class="meta-grid">
+              <div class="meta-card">
+                <div class="meta-title">Consignee Details</div>
+                <div class="meta-body">
+                  <div><strong>To:</strong> ${order.retailerName || order.storeName || "-"}</div>
+                  <div><strong>Retailer ID:</strong> ${order.retailerId || "-"}</div>
+                  <div><strong>Dealer ID:</strong> ${order.dealerId || "-"}</div>
+                </div>
+              </div>
+              <div class="meta-card">
+                <div class="meta-title">Party Details</div>
+                <div class="meta-body">
+                  <div><strong>Sales By:</strong> ${order.order_by || "-"}</div>
+                  <div><strong>Salesman ID:</strong> ${order.order_by_id ?? "-"}</div>
+                  <div><strong>Status:</strong> ${order.status}</div>
+                </div>
+              </div>
+              <div class="meta-card">
+                <div class="meta-title">Order Details</div>
+                <div class="meta-body">
+                  <div><strong>Order No:</strong> ${String(order.id).slice(0, 8)}</div>
+                  <div><strong>Order Date:</strong> ${orderDate.toLocaleDateString("en-IN")}</div>
+                  <div><strong>Order Time:</strong> ${orderDate.toLocaleTimeString("en-IN")}</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="remark"><strong>Remark:</strong> ${order.notes || "No notes added"}</div>
+
+            <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Sr</th>
+                  <th>Booking Type</th>
+                  <th>Description</th>
+                  <th>Set pcs</th>
+                  <th>Design No</th>
+                  <th>#</th>
+                  ${sizeColumns}
+                  <th>Qty</th>
+                  <th>Rate Total</th>
+                  <th>MRP Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+                <tr class="total-row">
+                  <td colspan="${6 + allSizes.length}" class="left">Total</td>
+                  <td>${totals.totalQty}</td>
+                  <td>Rs.${formatMoney(totals.totalRateAmount)}</td>
+                  <td>Rs.${formatMoney(totals.totalMrpAmount)}</td>
+                </tr>
+              </tbody>
+            </table>
+            </div>
+
+            <div class="summary">
+              <div class="terms">
+                <div style="font-weight:700; margin-bottom:8px;">Terms & Conditions</div>
+                <div class="small">
+                  Goods once sold are subject to dealer order approval and billing rules. Please verify sizes,
+                  rates, and dispatch notes before accepting delivery. Payment and transport disputes are handled
+                  according to the seller's booking policy.
+                </div>
+              </div>
+              <div class="totals">
+                <p>Total Order QTY: ${totals.totalQty}</p>
+                <p>Total Rate: Rs.${formatMoney(totals.totalRateAmount)}</p>
+                <p>Total MRP: Rs.${formatMoney(totals.totalMrpAmount)}</p>
+              </div>
+            </div>
+          </div>
+        </body>
+      </html>
+    `);
+    invoiceWindow.document.close();
+    invoiceWindow.focus();
+    invoiceWindow.print();
+  };
 
   // Update local orders when prop changes
   useEffect(() => {
@@ -449,36 +840,108 @@ const OrdersList: React.FC<OrdersListProps> = ({
                               View Details
                             </Button>
                           </DialogTrigger>
-                          <DialogContent className="max-w-md">
+                          <DialogContent className="max-w-6xl p-2">
                             <DialogHeader>
                               <DialogTitle>Order Details</DialogTitle>
                             </DialogHeader>
-                            {selectedOrder && selectedOrder.id === order.id && (
-                              <div className="mt-4">
-                                <p className="text-sm text-muted-foreground mb-2">
+                            {selectedOrder && selectedOrder.id === order.id && selectedOrderGroups && (
+                              <div className="mt-4 space-y-4">
+                                <p className="text-sm text-muted-foreground">
                                   Order #{String(selectedOrder.id).slice(0, 8)} -{" "}
                                   {new Date(selectedOrder.createdAt).toLocaleString()}
                                 </p>
-                                <div className="space-y-4">
-                                  <div>
-                                    <h4 className="font-medium">Items:</h4>
-                                    <ul className="mt-2 space-y-2">
-                                      {selectedOrder.items.map((item, i) => (
-                                        <li key={i} className="flex justify-between text-sm">
-                                          <span>
-                                            {item.product.name} x {item.quantity}
-                                          </span>
-                                          <span>
-                                            {(item.product.price * item.quantity).toFixed(2)}
-                                          </span>
-                                        </li>
+                                <div className="max-h-[60vh] overflow-auto rounded-xl border border-slate-200">
+                                  <div className="min-w-[980px]">
+                                    <div
+                                      className="grid gap-px bg-slate-200 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600"
+                                      style={{ gridTemplateColumns: `56px 110px minmax(220px,1fr) 70px 110px 58px repeat(${selectedOrderGroups.allSizes.length}, minmax(66px, 1fr)) 88px 112px 112px` }}
+                                    >
+                                      <div className="bg-slate-50 px-3 py-3 text-center">Sr</div>
+                                      <div className="bg-slate-50 px-3 py-3 text-center">Booking Type</div>
+                                      <div className="bg-slate-50 px-3 py-3">Description</div>
+                                      <div className="bg-slate-50 px-3 py-3 text-center">Set pcs</div>
+                                      <div className="bg-slate-50 px-3 py-3 text-center">Design No</div>
+                                      <div className="bg-slate-50 px-3 py-3 text-center">#</div>
+                                      {selectedOrderGroups.allSizes.map((size) => (
+                                        <div key={size} className="bg-slate-50 px-2 py-3 text-center">{size}</div>
                                       ))}
-                                    </ul>
+                                      <div className="bg-slate-50 px-3 py-3 text-center">Qty</div>
+                                      <div className="bg-slate-50 px-3 py-3 text-center">Rate Total</div>
+                                      <div className="bg-slate-50 px-3 py-3 text-center">MRP Total</div>
+                                    </div>
+
+                                    <div className="divide-y divide-slate-200">
+                                      {selectedOrderGroups.groupedItems.map((group) => (
+                                        <div
+                                          key={group.key}
+                                          className="grid gap-px bg-slate-200 text-sm"
+                                          style={{ gridTemplateColumns: `56px 110px minmax(220px,1fr) 70px 110px 58px repeat(${selectedOrderGroups.allSizes.length}, minmax(66px, 1fr)) 88px 112px 112px` }}
+                                        >
+                                          <div className="bg-white px-3 py-4 text-center font-medium">{group.srNo}</div>
+                                          <div className="bg-white px-3 py-4 text-center">{group.bookingType}</div>
+                                          <div className="bg-white px-3 py-4">
+                                            <div className="font-semibold text-slate-900">{group.description}</div>
+                                            {group.color ? <div className="mt-1 text-xs text-slate-500">{group.color}</div> : null}
+                                          </div>
+                                          <div className="bg-white px-3 py-4 text-center">{group.setPcs || "-"}</div>
+                                          <div className="bg-white px-3 py-4 text-center">{group.designNo}</div>
+                                          <div className="bg-white px-2 py-4 text-[11px] font-semibold leading-6">
+                                            <div className="text-red-500">Qty</div>
+                                            <div className="text-emerald-600">Rate</div>
+                                            <div className="text-blue-600">MRP</div>
+                                          </div>
+                                          {selectedOrderGroups.allSizes.map((size) => {
+                                            const line = group.sizes.find((entry) => entry.size === size);
+                                            return (
+                                              <div key={`${group.key}-${size}`} className="bg-white px-2 py-4 text-center text-[11px] leading-6">
+                                                {line ? (
+                                                  <>
+                                                    <div className="font-semibold text-red-500">{line.qty}</div>
+                                                    <div className="font-medium text-emerald-600">{formatMoney(line.rate)}</div>
+                                                    <div className="font-medium text-blue-600">{formatMoney(line.mrp)}</div>
+                                                  </>
+                                                ) : (
+                                                  <div className="text-slate-300">-</div>
+                                                )}
+                                              </div>
+                                            );
+                                          })}
+                                          <div className="bg-white px-3 py-4 text-center font-semibold">{group.totalQty}</div>
+                                          <div className="bg-white px-3 py-4 text-center font-semibold">{formatMoney(group.totalRateAmount)}</div>
+                                          <div className="bg-white px-3 py-4 text-center font-semibold">{formatMoney(group.totalMrpAmount)}</div>
+                                        </div>
+                                      ))}
+
+                                      <div
+                                        className="grid gap-px bg-slate-200 text-sm font-semibold"
+                                        style={{ gridTemplateColumns: `56px 110px minmax(220px,1fr) 70px 110px 58px repeat(${selectedOrderGroups.allSizes.length}, minmax(66px, 1fr)) 88px 112px 112px` }}
+                                      >
+                                        <div className="bg-slate-50 px-3 py-4 text-left" style={{ gridColumn: `1 / span ${6 + selectedOrderGroups.allSizes.length}` }}>
+                                          Total
+                                        </div>
+                                        <div className="bg-slate-50 px-3 py-4 text-center">{selectedOrderGroups.totals.totalQty}</div>
+                                        <div className="bg-slate-50 px-3 py-4 text-center">{formatMoney(selectedOrderGroups.totals.totalRateAmount)}</div>
+                                        <div className="bg-slate-50 px-3 py-4 text-center">{formatMoney(selectedOrderGroups.totals.totalMrpAmount)}</div>
+                                      </div>
+                                    </div>
                                   </div>
-                                  <div className="flex justify-between font-medium">
-                                    <span>Total:</span>
-                                    <span>{Number(selectedOrder.total).toFixed(2)}</span>
+                                </div>
+
+                                <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                                  <div className="space-y-1">
+                                    <div>Total Qty: <span className="font-semibold text-slate-900">{selectedOrderGroups.totals.totalQty}</span></div>
+                                    <div>Total Rate Amount: <span className="font-semibold text-slate-900">Rs.{formatMoney(selectedOrderGroups.totals.totalRateAmount)}</span></div>
+                                    <div>Total MRP Amount: <span className="font-semibold text-slate-900">Rs.{formatMoney(selectedOrderGroups.totals.totalMrpAmount)}</span></div>
                                   </div>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="shrink-0"
+                                    onClick={() => handlePrintInvoice(selectedOrder)}
+                                  >
+                                    <Printer className="mr-2 h-4 w-4" />
+                                    Print Invoice
+                                  </Button>
                                 </div>
                               </div>
                             )}

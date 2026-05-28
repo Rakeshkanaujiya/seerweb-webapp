@@ -29,6 +29,8 @@ import StaffDashboard from "./pages/staff/StaffDashboard";
 import AddProduct from "./pages/dealer/AddProduct";
 import ManageCustomFields from "./pages/dealer/ManageCustomFields";
 import Profile from "./components/Profile";
+import GarmentSizeSettingsPage from "./pages/dealer/GarmentSizeSettingsPage";
+import CartSettingsPage from "./pages/dealer/CartSettingsPage";
 
 const queryClient = new QueryClient();
 
@@ -63,6 +65,8 @@ const App = () => (
               <Route path="/dealer/staff" element={<Layout><DealerStaff /></Layout>} />
               <Route path="/dealer/staff" element={<Layout><DealerStaff /></Layout>} />
               <Route path="/dealer/custom-fields" element={<ManageCustomFields />} />
+              <Route path="/dealer/garment-size-settings" element={<GarmentSizeSettingsPage />} />
+              <Route path="/dealer/cart-settings" element={<CartSettingsPage />} />
               <Route path="/staff/sales_report" element={<Layout><Orders /></Layout>} />
               <Route path="/staff/take_order" element={<Layout><SalesExecutiveDashboard /></Layout>} />
               <Route path="/staff/" element={<Layout><StaffDashboard /></Layout>} />

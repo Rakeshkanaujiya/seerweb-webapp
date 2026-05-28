@@ -14,9 +14,10 @@ import {
 import {
   User, Mail, Phone, MapPin, Building2, Shield,
   KeyRound, Eye, EyeOff, LogOut, Calendar,
-  BadgeCheck, Hash, Store, Settings2, ChevronRight,
+  BadgeCheck, Hash, Store, Settings2, ChevronRight, Ruler, ShoppingCart,
 } from "lucide-react";
 import MainLayout from "./MainLayoutProps";
+import { isGarmentsBusiness } from "@/lib/businessType";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -290,6 +291,46 @@ const Profile = () => {
                     <p className="text-sm font-semibold text-gray-900">Custom Product Fields</p>
                     <p className="text-xs text-gray-400 mt-0.5">
                       Create and manage your own product fields (HSN Code, Fabric Type, etc.)
+                    </p>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-400 flex-shrink-0" />
+                </button>
+              </div>
+            )}
+
+            {user?.role === "dealer" && isGarmentsBusiness(user?.business_type_id) && (
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm mb-5 overflow-hidden">
+                <button
+                  onClick={() => navigate("/dealer/garment-size-settings")}
+                  className="w-full flex items-center gap-4 p-5 hover:bg-gray-50 transition-colors"
+                >
+                  <div className="h-9 w-9 rounded-xl bg-amber-50 flex items-center justify-center flex-shrink-0">
+                    <Ruler size={16} className="text-amber-600" />
+                  </div>
+                  <div className="flex-1 text-left">
+                    <p className="text-sm font-semibold text-gray-900">Garments Size Settings</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Enable or disable size systems on a separate settings page.
+                    </p>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-400 flex-shrink-0" />
+                </button>
+              </div>
+            )}
+
+            {user?.role === "dealer" && (
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm mb-5 overflow-hidden">
+                <button
+                  onClick={() => navigate("/dealer/cart-settings")}
+                  className="w-full flex items-center gap-4 p-5 hover:bg-gray-50 transition-colors"
+                >
+                  <div className="h-9 w-9 rounded-xl bg-emerald-50 flex items-center justify-center flex-shrink-0">
+                    <ShoppingCart size={16} className="text-emerald-600" />
+                  </div>
+                  <div className="flex-1 text-left">
+                    <p className="text-sm font-semibold text-gray-900">Cart Settings</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Configure cards per row and choose which details appear on cart cards.
                     </p>
                   </div>
                   <ChevronRight size={16} className="text-gray-400 flex-shrink-0" />

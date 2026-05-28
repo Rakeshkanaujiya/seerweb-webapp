@@ -73,7 +73,7 @@ export type Product = {
   created_at?:       string;
   color?:            string;
   image?:            string | null;
-  attributes?:       Record<string, string>;
+  attributes?:       Record<string, any>;
   business_type_id?: number | null;
   variants?:         ProductVariant[];
 };
@@ -81,7 +81,7 @@ export type Product = {
 // ── Cart ──────────────────────────────────────────────────────────────────────
 
 export interface CartVariantItem {
-  variantId: number;  // 0 for products with no size variants
+  variantId: number | string;  // 0 for products with no size variants
   size:      string;
   color:     string;
   price:     number;  // selling rate
@@ -89,6 +89,7 @@ export interface CartVariantItem {
   quantity:  number;  // retailer's ordered qty
   stock:     number;  // available stock
   rack?:     string;  // rack location
+  setQuantity?: number;
 }
 
 export interface CartItem {
@@ -100,8 +101,18 @@ export interface CartItem {
   model?:          string;
   name?:            string;
   businessTypeId?: number | null;  // business type for schema lookup
-  attributes:      Record<string, string>;  // all product attributes (dynamic fields)
+  attributes:      Record<string, any>;  // all product attributes (dynamic fields)
   variants:        CartVariantItem[];
+  garmentMeta?: {
+    designNumber?: string;
+    fabricType?: string;
+    bookingType?: string;
+    selectedColor?: string;
+    selectedColorHex?: string;
+    selectedSizes?: string[];
+    productTags?: string[];
+    galleryImages?: string[];
+  };
 }
 
 export interface Cart {
@@ -127,11 +138,18 @@ export interface Order {
   order_by_id:  number;
   items: {
     productId: number;
+    variantId?: number | string;
+    size?: string;
+    color?: string;
     quantity:  number;
     price:     number;
+    subtotal?: number;
+    rack?: string;
+    attributes_snapshot?: Record<string, any>;
     product: {
       name:  string;
       price: number;
+      mrp?: number;
     };
   }[];
 }

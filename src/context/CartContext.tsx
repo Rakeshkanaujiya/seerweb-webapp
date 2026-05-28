@@ -8,10 +8,15 @@ interface CartContextType {
   cart:              Cart;
   addToCart:         (product: Product, quantity: number) => void;
   addVariantToCart:  (product: Product, variant: ProductVariant, quantity: number) => void;
+  addGarmentBundle: (
+    product: Product,
+    variants: Array<ProductVariant & { quantity: number; color?: string; setQuantity?: number }>,
+    garmentMeta?: CartItem["garmentMeta"]
+  ) => void;
   removeFromCart:    (productId: string) => void;
-  removeVariant:     (productId: string, variantId: number) => void;
+  removeVariant:     (productId: string, variantId: number | string) => void;
   updateQuantity:    (productId: string, quantity: number) => void;
-  updateVariantQty:  (productId: string, variantId: number, quantity: number) => void;
+  updateVariantQty:  (productId: string, variantId: number | string, quantity: number) => void;
   clearCart:         () => void;
   cartCount:         number;
   cartTotal:         number;
@@ -91,7 +96,7 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
 
     const pId  = String(product.id);
     const vItem: CartVariantItem = {
-      variantId: variant.id,
+            variantId: `${variant.id}-${(variant.color || garmentMeta?.selectedColor || "").toLowerCase() || "default"}`,
       size:      variant.size  || "",
       color:     variant.color || product.attributes?.color || "",
       price:     variant.rate  || variant.mrp || product.price,
@@ -142,6 +147,83 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
       toast.success(
         `Added ${quantity}× ${product.name}${variant.size ? ` (${variant.size})` : ""}`
       );
+      return { items: newItems, total: calcTotal(newItems) };
+    });
+  };
+
+  const addGarmentBundle = (
+    product: Product,
+    variants: Array<ProductVariant & { quantity: number; color?: string; setQuantity?: number }>,
+    garmentMeta?: CartItem["garmentMeta"]
+  ) => {
+    const validVariants = variants.filter((variant) => variant.quantity > 0);
+    if (validVariants.length === 0) return;
+
+    const pId = String(product.id);
+    const incomingVariants: CartVariantItem[] = validVariants.map((variant) => ({
+      variantId: variant.id,
+      size: variant.size || "",
+      color: variant.color || garmentMeta?.selectedColor || product.attributes?.color || "",
+      price: variant.rate || variant.mrp || product.price,
+      mrp: variant.mrp || product.price,
+      quantity: variant.quantity,
+      stock: variant.qty,
+      rack: variant.rack || "",
+      setQuantity: variant.setQuantity,
+    }));
+
+    setCart((prev) => {
+      const existingProduct = prev.items.find((item) => item.productId === pId);
+
+      let newItems: CartItem[];
+      if (existingProduct) {
+        newItems = prev.items.map((item) => {
+          if (item.productId !== pId) return item;
+
+          const mergedVariants = [...item.variants];
+          incomingVariants.forEach((incomingVariant) => {
+            const existingIndex = mergedVariants.findIndex(
+              (variant) =>
+                variant.variantId === incomingVariant.variantId &&
+                variant.color === incomingVariant.color
+            );
+
+            if (existingIndex >= 0) {
+              mergedVariants[existingIndex] = {
+                ...mergedVariants[existingIndex],
+                quantity: mergedVariants[existingIndex].quantity + incomingVariant.quantity,
+                setQuantity: (mergedVariants[existingIndex].setQuantity ?? 0) + (incomingVariant.setQuantity ?? 0),
+              };
+            } else {
+              mergedVariants.push(incomingVariant);
+            }
+          });
+
+          return {
+            ...item,
+            garmentMeta: garmentMeta ?? item.garmentMeta,
+            variants: mergedVariants,
+          };
+        });
+      } else {
+        newItems = [
+          ...prev.items,
+          {
+            productId: pId,
+            productName: product.name,
+            image: product.image ?? null,
+            brand: product.brand || product.attributes?.brand || "",
+            model: product.model || product.attributes?.model || "",
+            businessTypeId: product.business_type_id ?? null,
+            attributes: product.attributes ?? {},
+            variants: incomingVariants,
+            garmentMeta,
+            color: garmentMeta?.selectedColor ?? "",
+          },
+        ];
+      }
+
+      toast.success(`Added ${incomingVariants.length} garment line${incomingVariants.length > 1 ? "s" : ""}`);
       return { items: newItems, total: calcTotal(newItems) };
     });
   };
@@ -217,7 +299,7 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
   };
 
   // ── removeVariant — remove one size from a product ───────────────────────
-  const removeVariant = (productId: string, variantId: number) => {
+  const removeVariant = (productId: string, variantId: number | string) => {
     setCart((prev) => {
       const newItems = prev.items
         .map((item) =>
@@ -249,7 +331,7 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
   };
 
   // ── updateVariantQty — update qty of a specific size ─────────────────────
-  const updateVariantQty = (productId: string, variantId: number, quantity: number) => {
+  const updateVariantQty = (productId: string, variantId: number | string, quantity: number) => {
     if (quantity <= 0) { removeVariant(productId, variantId); return; }
     setCart((prev) => {
       const newItems = prev.items.map((item) =>
@@ -280,6 +362,7 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
         cart,
         addToCart,
         addVariantToCart,
+        addGarmentBundle,
         removeFromCart,
         removeVariant,
         updateQuantity,

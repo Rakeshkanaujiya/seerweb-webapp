@@ -14,6 +14,8 @@ import {
 import { toast } from "sonner";
 import OmsCart from "@/components/OmsCart";
 import MainLayout from "@/components/MainLayoutProps";
+import { isGarmentsBusiness } from "@/lib/businessType";
+import { GarmentBookingPage } from "@/features/garments/GarmentBookingPage";
 
 // ─────────────────────────────────────────────────────────────────────────────
 const RetailerHome = () => {
@@ -164,6 +166,16 @@ const RetailerHome = () => {
   };
 
   const showSize = Number(user?.business_type_id) === 2;
+
+  if (!loading && isAuthenticated && user?.role === "retailer" && isGarmentsBusiness(user?.business_type_id)) {
+    return (
+      <GarmentBookingPage
+        dealerId={user?.dealer_id}
+        title="Garments Booking Portal"
+        subtitle="Browse booking designs, select colors and sizes, and build your wholesale order."
+      />
+    );
+  }
 
   if (loading || !isAuthenticated || user?.role !== "retailer") {
     return (

@@ -14,6 +14,8 @@ interface OmsCartProps {
   product: Product;
   showSize?: boolean;
   onAddSuccess?: () => void;
+  canAddToCart?: boolean;
+  onAddBlocked?: () => void;
 }
 
 function resolveProductColor(product: Partial<Product>): string {
@@ -37,7 +39,13 @@ function resolveProductColor(product: Partial<Product>): string {
   return "";
 }
 
-const OmsCart: React.FC<OmsCartProps> = ({ product, showSize = false, onAddSuccess }) => {
+const OmsCart: React.FC<OmsCartProps> = ({
+  product,
+  showSize = false,
+  onAddSuccess,
+  canAddToCart = true,
+  onAddBlocked,
+}) => {
   const {
     cart,
     addToCart,
@@ -80,6 +88,10 @@ const OmsCart: React.FC<OmsCartProps> = ({ product, showSize = false, onAddSucce
     cart.items.find((i) => i.productId === productId)?.variants.find((v) => v.variantId === 0) ?? null;
 
   const handleAddVariant = (p: Product, variant: ProductVariant) => {
+    if (!canAddToCart) {
+      onAddBlocked?.();
+      return;
+    }
     const qty = parseInt(qtyState[p.id]?.[variant.id] ?? String(variant.qty), 10);
     if (isNaN(qty) || qty <= 0) {
       toast.error("Enter a valid quantity");
@@ -312,6 +324,10 @@ const OmsCart: React.FC<OmsCartProps> = ({ product, showSize = false, onAddSucce
                 <Button
                   size="sm"
                   onClick={() => {
+                    if (!canAddToCart) {
+                      onAddBlocked?.();
+                      return;
+                    }
                     addToCart(product, 1);
                     onAddSuccess?.();
                   }}

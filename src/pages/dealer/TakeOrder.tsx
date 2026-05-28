@@ -34,6 +34,8 @@ import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import { getImageUrl, getProxiedImageUrl } from "@/lib/imageUrl";
 import MainLayout from "@/components/MainLayoutProps";
+import { isGarmentsBusiness } from "@/lib/businessType";
+import { GarmentBookingPage } from "@/features/garments/GarmentBookingPage";
 
 interface Retailer {
   id:         number;
@@ -45,7 +47,7 @@ interface Retailer {
   store_name: string;
 }
 
-const TakeOrder = () => {
+const LegacyTakeOrder = () => {
   const {
     cart, addToCart, removeFromCart, removeVariant,
     updateQuantity, updateVariantQty,
@@ -72,6 +74,8 @@ const TakeOrder = () => {
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterDesign, setFilterDesign] = useState("");
   const pdfContainerRef = useRef<HTMLDivElement>(null);
+
+  const requiresRetailerContext = Number(user?.business_type_id) === 1;
   
     // ── Auth guard ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -95,6 +99,15 @@ const TakeOrder = () => {
       } catch { console.error("Retailers fetch error"); }
     })();
   }, [user?.id]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("selectedRetailer");
+      if (saved) {
+        setSelectedRetailer(JSON.parse(saved));
+      }
+    } catch {}
+  }, []);
 
   // ── Fetch products ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -165,6 +178,11 @@ const TakeOrder = () => {
   const handleVoiceStart = useCallback(() => { resetVoice(); startListening(); }, [resetVoice, startListening]);
 
   const handleVoiceAutoAdd = useCallback(() => {
+    if (requiresRetailerContext && !selectedRetailer) {
+      toast.error("Select a retailer before adding products.");
+      resetVoice();
+      return;
+    }
     if (!parseResult) return;
     if (voiceState === "success") {
       let addedCount = 0;
@@ -177,7 +195,7 @@ const TakeOrder = () => {
     } else if (voiceState === "fallback" || voiceState === "error") {
       setShowFallbackModal(true);
     }
-  }, [parseResult, voiceState, products, addToCart, resetVoice]);
+  }, [parseResult, voiceState, products, addToCart, resetVoice, requiresRetailerContext, selectedRetailer]);
 
   if (voiceState === "success" && parseResult && !showFallbackModal)
     setTimeout(() => handleVoiceAutoAdd(), 0);
@@ -185,6 +203,10 @@ const TakeOrder = () => {
     setTimeout(() => setShowFallbackModal(true), 0);
 
   const handleConfirmItems = (items: { productId: string; quantity: number }[]) => {
+    if (requiresRetailerContext && !selectedRetailer) {
+      toast.error("Select a retailer before adding products.");
+      return;
+    }
     let count = 0;
     items.forEach(({ productId, quantity }) => {
       const p = products.find((x) => x.id === productId);
@@ -251,12 +273,31 @@ const filteredProducts = useMemo(() => {
   });
 }, [products, searchQuery, filterBrand, filterCategory, filterDesign]);
 
-const resetFilters = () => {
+  const resetFilters = () => {
   setSearchQuery("");
   setFilterBrand("all");
   setFilterCategory("all");
   setFilterDesign("");
 };
+
+  const handleRetailerSelection = (retailer: Retailer, moveToOrder = false) => {
+    const retailerChanged = selectedRetailer && selectedRetailer.id !== retailer.id;
+    if (retailerChanged && cart.items.length > 0) {
+      clearCart();
+      toast.info("Cart cleared because the retailer was changed.");
+    }
+
+    setSelectedRetailer(retailer);
+    localStorage.setItem("selectedRetailer", JSON.stringify(retailer));
+    if (moveToOrder) {
+      setActiveTab("order");
+    }
+  };
+
+  const handleAddBlocked = () => {
+    toast.error("Select a retailer first. Dealer orders for business type 1 must be created retailer-wise.");
+    setActiveTab("retailers");
+  };
 
 // Replace toBase64 entirely with this
 const loadImageAsBase64 = async (url: string, retries = 3): Promise<string> => {
@@ -738,8 +779,7 @@ const loadImageAsBase64 = async (url: string, retries = 3): Promise<string> => {
                       <Card
                         key={r.id}
                         onClick={() => {
-                          setSelectedRetailer(r);
-                          localStorage.setItem("selectedRetailer", JSON.stringify(r));
+                          handleRetailerSelection(r);
                         }}
                         className={`p-4 cursor-pointer transition-all duration-200 ${
                           isSelected
@@ -772,9 +812,7 @@ const loadImageAsBase64 = async (url: string, retries = 3): Promise<string> => {
                             className="flex-1 bg-blue-600 hover:bg-blue-700 text-white h-8 text-xs"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setSelectedRetailer(r);
-                              localStorage.setItem("selectedRetailer", JSON.stringify(r));
-                              setActiveTab("order");
+                              handleRetailerSelection(r, true);
                             }}
                           >
                             <ShoppingCart size={12} className="mr-1" /> Create Order
@@ -856,6 +894,12 @@ const loadImageAsBase64 = async (url: string, retries = 3): Promise<string> => {
                   onStop={stopListening} 
                 />
                 </div>
+
+                {requiresRetailerContext && !selectedRetailer && (
+                  <div className="mb-5 rounded-xl border border-dashed border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+                    Products can be added only after selecting a retailer. This keeps the cart and final order linked to the correct retailer account.
+                  </div>
+                )}
 
                 {/* Hidden PDF temp container */}
                 <div ref={pdfContainerRef} style={{ position: 'absolute', left: '-9999px', top: 0, width: '210mm', height: '297mm' }} />
@@ -997,6 +1041,8 @@ const loadImageAsBase64 = async (url: string, retries = 3): Promise<string> => {
                         key={product.id}
                         product={product}
                         showSize={Number(user?.business_type_id) === 2}
+                        canAddToCart={!requiresRetailerContext || !!selectedRetailer}
+                        onAddBlocked={handleAddBlocked}
                       />
                     ))}
                     {filteredProducts.length === 0 && (
@@ -1170,6 +1216,22 @@ const loadImageAsBase64 = async (url: string, retries = 3): Promise<string> => {
       </div>
     </MainLayout>
   );
+};
+
+const TakeOrder = () => {
+  const { user } = useAuth();
+
+  if (isGarmentsBusiness(user?.business_type_id)) {
+    return (
+      <GarmentBookingPage
+        dealerId={user?.id}
+        title="Dealer Garments Booking Desk"
+        subtitle="Create wholesale bookings with live garment cards, set ordering, and size-wise piece entry."
+      />
+    );
+  }
+
+  return <LegacyTakeOrder />;
 };
 
 export default TakeOrder;

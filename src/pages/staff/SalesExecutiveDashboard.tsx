@@ -28,8 +28,10 @@ import OmsCart from "@/components/OmsCart";
 import { Retailer } from "@/types";
 import { useBusinessSchema } from "@/hooks/useBusinessSchema";
 import MainLayout from "@/components/MainLayoutProps";
+import { isGarmentsBusiness } from "@/lib/businessType";
+import { GarmentBookingPage } from "@/features/garments/GarmentBookingPage";
 
-const SalesExecutiveDashboard = () => {
+const LegacySalesExecutiveDashboard = () => {
   const { user, isAuthenticated } = useAuth();
   const {
     cart, clearCart,
@@ -580,6 +582,22 @@ const SalesExecutiveDashboard = () => {
         </div>
     </MainLayout>
   );
+};
+
+const SalesExecutiveDashboard = () => {
+  const { user } = useAuth();
+
+  if (isGarmentsBusiness(user?.business_type_id)) {
+    return (
+      <GarmentBookingPage
+        dealerId={user?.dealer_id}
+        title="Executive Garments Booking"
+        subtitle="Capture size-wise garment orders for assigned retailers using the wholesale booking catalog."
+      />
+    );
+  }
+
+  return <LegacySalesExecutiveDashboard />;
 };
 
 export default SalesExecutiveDashboard;
